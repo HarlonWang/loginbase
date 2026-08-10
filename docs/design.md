@@ -61,7 +61,9 @@ const auth = createLogin({
     2. **解除「仓库必须 public」硬约束**——git 依赖时代 Workers Builds 云端装依赖无凭据、私有仓库必失败；registry 之后 public 与否降为普通偏好；
     3. **构建产物两难提前消解**——git 依赖发编译产物要么消费方 `prepare` 现场构建（慢、flaky），要么提交 `dist/` 进仓库；registry 发布时构建一次，消费方拿现成 tarball；
     4. **安装干净**——只拉 `files` 筛过的 tarball，不 clone 整个 monorepo。
-- **KMP**：R2 静态 Maven（计划 `maven.harlon.wang`），release workflow 在 macos runner 上 `gradlew publish` 后同步 R2。排除项：JitPack（Linux 构建机编不了 iOS target）、Maven Central（sonatype 流程过重）、GitHub Packages（拉包也要 token）。
+- **KMP**：Maven Central 正式发包 `wang.harlon:loginbase-kt`（vanniktech maven-publish 插件，tag 触发 CI 在 macos runner 上 `publishAndReleaseToMavenCentral`），照抄 kmp-webview 的成熟链路；Sonatype 凭证与 GPG 签名密钥在私有仓库 HarlonWang/secrets 的 `maven-publishing/`（quickjs-wrapper / feedback-sdk 同源）。
+  - 初版方案曾选 R2 静态 Maven（计划 `maven.harlon.wang`），排除 Central 的理由是「sonatype 流程过重」；2026-08-10 改判：重的部分（账号、`wang.harlon` namespace 验证、GPG key、插件与 workflow 配置）已在 kmp-webview 全部付清，Central 零新增成本，且版本不可变 + 强制 GPG 签名 + 消费方零 repository 配置；R2 自建仓反要维护域名/bucket/同步 workflow，且对象可覆盖、无不可变性——与 npm 侧弃 git-tag 是同一条供应链论证。
+  - 仍排除：JitPack（Linux 构建机编不了 iOS target）、GitHub Packages（拉包也要 token）。
 - 发布沿用「打 tag 即发布」习惯：一个 tag 触发同一条 workflow，npm 与 Maven 两侧各自 CI publish，仍是一个 tag 锁两端。
 
 ## 技术选型：TypeScript（长期评估结论）

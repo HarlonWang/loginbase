@@ -40,7 +40,9 @@
 ```
 仓库        HarlonWang/loginbase
 npm         @harlonwang/loginbase
-Maven       wang.harlon.loginbase:loginbase-kt
+Maven       wang.harlon:loginbase-kt
 Kotlin 包    wang.harlon.loginbase
 类名前缀     Loginbase（如 LoginbaseClient）
 ```
+
+> Maven 坐标 2026-08-10 修订：原定 `wang.harlon.loginbase:loginbase-kt` 是 R2 自建仓时代的写法；改发 Maven Central 后对齐 kmp-webview 惯例（`wang.harlon:kmp-webview`），group 用已验证的裸 namespace，避免 group 末尾与 artifact 前缀重复。Kotlin 包名不变，仍是 `wang.harlon.loginbase`（Maven group 与 Kotlin 包名本就不要求一致，kmp-webview 即先例）。
