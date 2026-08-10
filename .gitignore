@@ -1,0 +1,16 @@
+# Node
+node_modules/
+dist/
+
+# Kotlin / Gradle
+kotlin/**/build/
+kotlin/.gradle/
+kotlin/local.properties
+
+# IDE / OS
+.idea/
+.DS_Store
+
+# Wrangler
+.wrangler/
+.dev.vars
