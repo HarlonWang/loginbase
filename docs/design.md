@@ -55,9 +55,15 @@ const auth = createLogin({
 
 ## 分发
 
-- **服务端**：public 仓库 + npm git-tag 依赖 `github:HarlonWang/loginbase#semver:^1.0.0`，零发布设施。硬约束：github-ai-trending-api 由 Cloudflare Workers Builds 云端装依赖，私有 git 依赖无凭据必失败——**仓库必须 public**（或改走 npm registry）。
+- **服务端**：npm registry 正式发包 `@harlonwang/loginbase`（scoped 公开包），tag 触发 CI 发布，用 npm trusted publishing（GitHub Actions OIDC，免长期 token，带 provenance）。
+  - 初版方案曾选 git-tag 依赖（`github:HarlonWang/loginbase#semver:^1.0.0`），理由是零发布设施；2026-08-10 改为 registry，前提变化是已有 npm 账号与发包经验，「零设施」优势缩水（KMP 侧本就要 CI，npm 只是同一 tag 触发下多一个 job），而 registry 的收益对 auth 库全踩在点上：
+    1. **版本不可变**——registry 同一版本号不能重发不同内容，git tag 可被 force 移动；对 auth 库是供应链完整性属性，与依赖最小集红线同源；
+    2. **解除「仓库必须 public」硬约束**——git 依赖时代 Workers Builds 云端装依赖无凭据、私有仓库必失败；registry 之后 public 与否降为普通偏好；
+    3. **构建产物两难提前消解**——git 依赖发编译产物要么消费方 `prepare` 现场构建（慢、flaky），要么提交 `dist/` 进仓库；registry 发布时构建一次，消费方拿现成 tarball；
+    4. **安装干净**——只拉 `files` 筛过的 tarball，不 clone 整个 monorepo。
+  - 降级路径：仓库保持 public 期间，git-tag 依赖天然可用，可作 registry 故障时的应急。
 - **KMP**：R2 静态 Maven（计划 `maven.harlon.wang`），release workflow 在 macos runner 上 `gradlew publish` 后同步 R2。排除项：JitPack（Linux 构建机编不了 iOS target）、Maven Central（sonatype 流程过重）、GitHub Packages（拉包也要 token）。
-- 发布沿用「打 tag 即发布」习惯：一个 tag，npm 侧 git tag 即分发，Maven 侧 CI publish。
+- 发布沿用「打 tag 即发布」习惯：一个 tag 触发同一条 workflow，npm 与 Maven 两侧各自 CI publish，仍是一个 tag 锁两端。
 
 ## 技术选型：TypeScript（长期评估结论）
 

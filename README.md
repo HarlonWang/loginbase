@@ -30,7 +30,7 @@ loginbase/
 
 ```
 仓库        HarlonWang/loginbase
-npm         @harlonwang/loginbase        （git tag 依赖：github:HarlonWang/loginbase#semver:^x）
+npm         @harlonwang/loginbase        （npm registry，tag 触发 CI 发布）
 Maven       wang.harlon.loginbase:loginbase-kt   （R2 静态 Maven，计划 maven.harlon.wang）
 Kotlin 包    wang.harlon.loginbase
 ```
