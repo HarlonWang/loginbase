@@ -16,7 +16,7 @@
 - **依赖最小集**：服务端 hono + jose（+ zod-validator），客户端 ktor + kotlinx-serialization + multiplatform-settings。加任何新依赖前先停下来问一遍值不值——auth 库是供应链攻击的最高价值目标。
 - **协议变更三位一体**：服务端 + `kotlin/` 客户端 + `docs/protocol.md` 必须同一个 commit；单一版本线，一个 tag 锁定两端。
 - **落地第 1 步不加新功能**：只平移 Tono 代码与测试，Tono-Server 现有测试通过即验收；钩子化、双语模板、github-oauth 插件是第 2 步的事。
-- npm 分发走 registry 正式发包（`@harlonwang/loginbase`，tag 触发 CI + trusted publishing）；git-tag 依赖仅作 public 期间的应急备用。仓库不再被分发链路强制 public（2026-08-10 由 git-tag 方案改来，理由见 design.md 分发节）。
+- npm 分发走 registry 正式发包（`@harlonwang/loginbase`，tag 触发 CI + trusted publishing），registry 是唯一分发路径。仓库不再被分发链路强制 public（2026-08-10 由 git-tag 方案改来，理由见 design.md 分发节）。
 - KMP 分发走 R2 静态 Maven（计划 `maven.harlon.wang`），iOS target 只能在 macOS 构建。
 
 ## 当前状态

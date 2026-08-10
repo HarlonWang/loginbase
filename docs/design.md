@@ -61,7 +61,6 @@ const auth = createLogin({
     2. **解除「仓库必须 public」硬约束**——git 依赖时代 Workers Builds 云端装依赖无凭据、私有仓库必失败；registry 之后 public 与否降为普通偏好；
     3. **构建产物两难提前消解**——git 依赖发编译产物要么消费方 `prepare` 现场构建（慢、flaky），要么提交 `dist/` 进仓库；registry 发布时构建一次，消费方拿现成 tarball；
     4. **安装干净**——只拉 `files` 筛过的 tarball，不 clone 整个 monorepo。
-  - 降级路径：仓库保持 public 期间，git-tag 依赖天然可用，可作 registry 故障时的应急。
 - **KMP**：R2 静态 Maven（计划 `maven.harlon.wang`），release workflow 在 macos runner 上 `gradlew publish` 后同步 R2。排除项：JitPack（Linux 构建机编不了 iOS target）、Maven Central（sonatype 流程过重）、GitHub Packages（拉包也要 token）。
 - 发布沿用「打 tag 即发布」习惯：一个 tag 触发同一条 workflow，npm 与 Maven 两侧各自 CI publish，仍是一个 tag 锁两端。
 
