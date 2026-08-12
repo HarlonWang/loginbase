@@ -32,7 +32,13 @@ function mockGithub(fetchSpy: ReturnType<typeof vi.spyOn>, opts: {
     }
     if (url.startsWith("https://api.github.com/user")) {
       return new Response(
-        JSON.stringify({ id: userId, login: "octocat", avatar_url: "https://a.png" }),
+        JSON.stringify({
+          id: userId,
+          login: "octocat",
+          avatar_url: "https://a.png",
+          two_factor_authentication: true, // 敏感字段，断言被白名单剔除
+          total_private_repos: 5,
+        }),
         { status: 200 }
       );
     }
@@ -297,6 +303,7 @@ describe("onVerified 契约（github provider）", () => {
       email: "octo@example.com",
       provider: "github",
       providerUserId: "98765",
+      // 白名单裁剪：two_factor_authentication / total_private_repos 等敏感字段不出库边界
       providerProfile: { id: 98765, login: "octocat", avatar_url: "https://a.png" },
       requestMeta: { ip: "8.8.8.8", userAgent: "oauth-ua" },
     });

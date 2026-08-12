@@ -8,9 +8,10 @@ export interface VerifiedIdentity {
   provider: "email" | "github";
   providerUserId?: string;
   /**
-   * OAuth provider 的原始档案（github = GitHub /user 响应 JSON），
-   * 供 App 建档时取 login/avatar 等资料；email provider 恒缺省。
-   * 形状归 provider 所有，库不解释、不裁剪。
+   * OAuth provider 的公开档案（GitHub = /user 响应裁剪到建档白名单：
+   * id/login/name/email/avatar_url/bio/html_url/company/location/blog/
+   * twitter_username/created_at），供 App 建档取资料；email provider 恒缺省。
+   * 认证视图的敏感字段（私有统计、2FA 状态等）在库边界内剔除。
    */
   providerProfile?: unknown;
   requestMeta: { ip?: string; userAgent?: string };

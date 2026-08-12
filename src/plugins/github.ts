@@ -56,6 +56,31 @@ function withParam(url: string, key: string, value: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(value)}`;
 }
 
+// providerProfile 只透传建档需要的公开档案白名单——GET /user 的认证视图含
+// two_factor_authentication、私有仓库统计等敏感字段，不该流出库边界。
+const PROFILE_FIELDS = [
+  "id",
+  "login",
+  "name",
+  "email",
+  "avatar_url",
+  "bio",
+  "html_url",
+  "company",
+  "location",
+  "blog",
+  "twitter_username",
+  "created_at",
+] as const;
+
+function publicProfile(user: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of PROFILE_FIELDS) {
+    if (user[key] !== undefined) out[key] = user[key];
+  }
+  return out;
+}
+
 export function registerGithubOauth<TEnv>(
   auth: Hono<{ Variables: AuthVariables }>,
   getConfig: (env: TEnv) => LoginConfig,
@@ -153,7 +178,7 @@ export function registerGithubOauth<TEnv>(
         email: email.trim().toLowerCase(),
         provider: "github",
         providerUserId: String(ghUser.id),
-        providerProfile: ghUser, // GitHub /user 原始 JSON，App 建档取资料用
+        providerProfile: publicProfile(ghUser), // GitHub /user 公开档案白名单字段
         requestMeta: { ip, userAgent },
       });
     } catch {

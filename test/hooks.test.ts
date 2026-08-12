@@ -58,6 +58,8 @@ describe("onVerified", () => {
       provider: "email",
       requestMeta: { ip: "7.7.7.7", userAgent: "hook-ua" },
     });
+    // email provider 恒不携带 providerProfile（契约行为，防未来误填充）
+    expect(seen && "providerProfile" in seen).toBe(false);
   });
 
   it("返回值透传：user / isNewUser 原样进响应；只返回 userId 时二者缺席", async () => {
