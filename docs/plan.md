@@ -60,6 +60,22 @@
 
 **验收**：新注册走 loginbase 全流程可用；存量用户邮箱登录命中原 `user_id`（数据不丢）；老 App Logto token 照常可用。**回滚**：双轨本身即回滚机制，摘掉 `/auth` 挂载即回到纯 Logto。
 
+### 验收方案（2026-08-12 对齐；背景：第 3 步上线时尚无新版 App，验证靠分层构造而非 UI 回归）
+
+- **A 部署前**：requireAuth 双轨 6 用例（两轨 × 有效/无效/缺失）+ onVerified 映射单测（快照命中原 user_id / github_user_id 命中 / 新 email 建号 / 晚到 Logto 用户收敛）；测试设施看仓库现状，缺则照搬 loginbase 的 vitest-pool-workers 模式。
+- **B 上线前**：存量迁移**对账报告**——导出数/写入数/冲突数三方核对 + 抽样人工核验 + 边界清单（同 email 多账号、GitHub 无公开 email）。
+- **C 上线日**（loginbase 轨道零流量窗口，可自动执行）：① 新轨邮箱全流程（Gmail 自动收码）；② **灵魂断言**——存量账号分别以 loginbase token 与 Logto token 打同一业务端点，返回同一用户同一份数据；③ github-oauth 全流程（github_user_id 命中原账号）；④ `track` 打点计数核验；⑤ 回滚演练（摘挂载→老轨照常→重挂）。
+- **D 上线后**：老版本 App 完整回归（fallback 零破坏）；观察期 Logto 轨道错误率持平基线、loginbase 轨道 refresh 事件形态正常。
+
+| # | 验收断言 | 手段 |
+|---|---|---|
+| 1 | 新注册走 loginbase 全流程可用 | C① + C③ |
+| 2 | 存量用户命中原 user_id、数据不丢 | B + C② |
+| 3 | 老 App Logto token 照常可用 | A + C② + D |
+| 4 | 两轨同账号 | C② |
+| 5 | 打点就位（退役决策数据源） | C④ |
+| 6 | 回滚路径实测可用 | C⑤ |
+
 ### 双轨生命周期（2026-08-12 对齐）
 
 地基是「同一账号，两种凭证」：无论 Logto token 还是 loginbase token，后端都解析到同一 `user_id`（email / `github_user_id` 双键映射）。两种 token 可结构化区分（HS256 vs RS256 + issuer），requireAuth 按 alg/issuer 路由而非盲试。
