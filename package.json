@@ -1,6 +1,6 @@
 {
   "name": "loginbase",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "description": "Shared login foundation for Cloudflare Workers: email OTP + social OAuth + session management, as a Hono sub-app factory.",
   "type": "module",
   "license": "MIT",
