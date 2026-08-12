@@ -67,6 +67,8 @@ const { sub: userId, sid: sessionId } = await verifyAccessToken(secret, token);
 
 ## 会话与令牌模型（直接采用 Tono 已验证实现）
 
+**双 token 分工（概念基线）**：登录态要同时满足三件事——每请求验身份（必须快）、可吊销（能踢人）、长期免登录（几个月）。单一凭证三者不可兼得：长命且可验 → 每请求查库；长命且免查库 → 签出即收不回；短命 → 用户频繁重登。拆成两个角色后各占两样：**access token 是通行证**——每个业务请求携带、服务端只验签不查库，代价是不可作废单张，用短命封顶泄露损失；**refresh token 是换证凭据**——只出现在 `/refresh` 一个端点、低频出网暴露面小，长命所以必须可吊销：服务端存哈希、换证时查库，吊销/轮换/重用检测全部长在这一侧。低频侧承担全部状态与安全机制，高频侧保持无状态的快——这就是 design.md 弃「不透明 token 每请求查库」方案的结构原因。
+
 **Access token**：JWT HS256，TTL 1h（可配），载荷 `sub`（userId）+ `sid`（sessionId）。middleware 纯验签零查库；代价是吊销延迟 ≤ access TTL，对目标 App 风险等级已评估可接受（design.md 已记录弃「不透明 token 每请求查库」的对比）。
 
 **Refresh token**：32 字节 CSPRNG，base64url 发给客户端；服务端 D1 **只存 SHA-256 hex**，且哈希本身就是 `sessions.id`（查找即 `WHERE id = hash(token)`，无第二索引）。泄库拿不到可用 token。
@@ -84,6 +86,28 @@ const { sub: userId, sid: sessionId } = await verifyAccessToken(secret, token);
 三种结局都过 `onEvent` 记录（`outcome: rescued / reuse_revoked / guardrail_revoked`），不含 token 明文。
 
 **过期**：`sessions.expires_at` 现状恒 NULL（refresh 永不过期，只被轮换/吊销终结）；`session.refreshTtlMs` 配置为将来收紧留口，默认 null 保持 Tono 行为。
+
+**轮换的目的**：refresh token 是长命的不记名凭证（bearer），谁持有谁就是主人，是被盗价值最高的目标。轮换干三件事：
+
+1. 把长命凭证切成短命链条——被盗 token 的有效期从「几个月」缩到「受害者下次刷新为止」；
+2. **制造盗用检测信号（核心目的）**——不轮换时本人与盗用方共用同一 token，服务端永远无法分辨；轮换后链头唯一，双方各自刷新必有一方提交已作废的旧 token，「不可检测的静默盗用」被转化为「必然暴露的碰撞事件」，重用检测撤销整链即对该信号的响应；
+3. 配合哈希存储，任意时刻仅链头有效，泄库拿到的历史行皆废纸。
+
+该信号有先天噪声：**丢回执的诚实重试与真盗用在信号上完全同形**（都是「旧 token 再现」），竞态容忍设计的全部分歧就在去噪方式。
+
+**与 Logto 及业界对照**（2026-08-12 查证；Logto 构建在 node-oidc-provider 上，refresh 语义即该库语义）：
+
+| 派别 | 代表 | 重用「去噪」方式 |
+|---|---|---|
+| 零容忍 | Logto / node-oidc-provider | 无——consumed token 再现即报 `invalid_grant` 并撤销整条 grant 链 |
+| 时间窗宽限 | Okta（默认 30s，可配 0–60s）、Auth0（Rotation Overlap Period，仅最近一代可重用）、Supabase（reuse interval 默认 10s） | 窗口内当重试，窗口外当盗用 |
+| 不轮换 | Firebase（长期单 token）、Duende IdentityServer（2024 默认改回可重用） | 放弃重用信号，靠账号事件吊销；立场是信号信噪比太差，推荐 sender-constrained（DPoP）直接免疫盗用 |
+| 状态判定（本库） | Tono / loginbase | 链未被推进（直接后继未使用）→ 判诚实重试，救活；已推进 → 双方共存的铁证，杀链；护栏 1h/3 次封交替刷新 |
+
+- 规范基线 RFC 9700（OAuth 2.0 Security BCP，2025-01）：sender-constrained 或 rotation + reuse detection 二选一；宽限窗口是各家在此之上的工程妥协。
+- Logto 侧移动 App 属 public client → 每次刷新必轮换 + 重用零容忍，TrendingAI 2026-08-01 事故是这个安全姿态的机制性结果（非 bug）。另两处差异：oidc-provider 对机密客户端仅在 ≥70% TTL 时轮换、轮换续命上限一年；本库恒轮换、refresh 不过期。
+- 状态判定 vs 时间窗的取舍：**覆盖面更广**——App 被杀/长断网后数分钟的诚实重试，时间窗（10~60s）一律误杀（温和版 Logto 病灶），状态判定只看链有没有前进；**暴露面更窄**——时间窗内攻击者持旧 token 同样能换新证，状态判定多一道「链未推进」前置条件 + 次数护栏；代价是救活路径多两次 D1 查询（查后继 + 护栏计数），对低频 auth 端点无关痛痒。
+- 本库场景是「公开客户端 + 无 DPoP 条件」，不轮换派路径不适用；design.md「救活机制从服务端根治 Logto 时代轮换竞态」的论断经此对照成立。
 
 ## 数据模型
 
