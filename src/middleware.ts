@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { jwtVerify } from "jose";
-import type { LoginConfig } from "./config";
+import type { LoginConfig } from "./config.js";
 
 export interface AuthVariables {
   userId: string;

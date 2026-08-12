@@ -1,4 +1,4 @@
-import type { EmailConfig } from "./email";
+import type { EmailConfig } from "./email.js";
 
 export interface LoginConfig {
   db: D1Database;

@@ -10,9 +10,9 @@ import {
   deleteCode,
   incrementAttempts,
   MAX_ATTEMPTS,
-} from "./code";
-import { sendCodeEmail } from "./email";
-import { checkSendRateLimit, recordSend } from "./rate_limit";
+} from "./code.js";
+import { sendCodeEmail } from "./email.js";
+import { checkSendRateLimit, recordSend } from "./rate_limit.js";
 import {
   createSession,
   hashRefreshToken,
@@ -22,11 +22,11 @@ import {
   tryRescueSession,
   revokeSession,
   revokeAllForUser,
-} from "./session";
-import { signAccessToken } from "./token";
-import { createAuthMiddleware, type AuthVariables } from "./middleware";
-import { logEvent } from "./log";
-import type { LoginConfig } from "./config";
+} from "./session.js";
+import { signAccessToken } from "./token.js";
+import { createAuthMiddleware, type AuthVariables } from "./middleware.js";
+import { logEvent } from "./log.js";
+import type { LoginConfig } from "./config.js";
 
 // 新用户注册赠送的 Pro 试用时长（3 个月）
 const TRIAL_PERIOD_MS = 90 * 24 * 60 * 60 * 1000;
