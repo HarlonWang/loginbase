@@ -1,0 +1,48 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+*'
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write   # gh release create 需要
+      id-token: write   # npm trusted publishing（OIDC）需要
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # trusted publishing 需要 npm >= 11.5；钉死版本保证发布流水线确定性
+      - name: Update npm
+        run: npm install -g npm@11.19.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify
+        run: npm run typecheck && npm run build && npm test
+
+      - name: Sync version from tag
+        run: npm version "$GITHUB_REF_NAME" --no-git-tag-version
+
+      - name: Publish to npm
+        run: npm publish
+
+      - name: Create GitHub Release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # 第 4 步（KMP 客户端）时在此追加 maven job：macos runner + publishAndReleaseToMavenCentral，
+  # 凭证从 HarlonWang/secrets 的 maven-publishing/ 配置到 GitHub Secrets（照抄 kmp-webview）。

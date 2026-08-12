@@ -1,0 +1,56 @@
+{
+  "name": "loginbase",
+  "version": "0.0.0",
+  "description": "Shared login foundation for Cloudflare Workers: email OTP + social OAuth + session management, as a Hono sub-app factory.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HarlonWang/loginbase.git"
+  },
+  "homepage": "https://github.com/HarlonWang/loginbase#readme",
+  "keywords": [
+    "auth",
+    "login",
+    "email-otp",
+    "session",
+    "cloudflare-workers",
+    "hono"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "hono": "^4.12.8"
+  },
+  "dependencies": {
+    "jose": "^6.2.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "~0.13.1",
+    "@cloudflare/workers-types": "~4.20260317.1",
+    "hono": "^4.12.8",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0",
+    "wrangler": "~4.74.0"
+  },
+  "allowScripts": {
+    "workerd@1.20260317.1": true,
+    "workerd@1.20260312.1": true
+  }
+}
