@@ -55,10 +55,29 @@
 2. `index.js` 挂载：`if (pathname.startsWith("/auth")) return login.fetch(request, env, ctx)`；
 3. `onVerified` 实现：`app_users` upsert（email 与 `github_user_id` 双键映射）；
 4. requireAuth 双轨：新 token（loginbase `verifyAccessToken`）优先，fallback 现有 `src/lib/logto-auth.js`——老版本 App 不断服；
-5. Logto 存量迁移：Management API 导出用户，按 email / `github_user_id` 映射回原 `user_id`，预写入映射表；
+5. Logto 存量迁移：Management API 导出用户，按 email / `github_user_id` 映射回原 `user_id`，预写入映射表——**导出快照只负责历史存量初始化**；双轨期间 Logto fallback 轨道每次认证仍照常 upsert 映射（持续映射，见下方生命周期），晚到的 Logto 注册用户同样收敛到同一 `user_id`；
 6. github-oauth 插件接入（deepLink 白名单 = TrendingAI scheme）。
 
 **验收**：新注册走 loginbase 全流程可用；存量用户邮箱登录命中原 `user_id`（数据不丢）；老 App Logto token 照常可用。**回滚**：双轨本身即回滚机制，摘掉 `/auth` 挂载即回到纯 Logto。
+
+### 双轨生命周期（2026-08-12 对齐）
+
+地基是「同一账号，两种凭证」：无论 Logto token 还是 loginbase token，后端都解析到同一 `user_id`（email / `github_user_id` 双键映射）。两种 token 可结构化区分（HS256 vs RS256 + issuer），requireAuth 按 alg/issuer 路由而非盲试。
+
+| 阶段 | 状态 | 要点 |
+|---|---|---|
+| 1. 服务端先行（第 3 步上线日） | loginbase 轨道零流量，老 App 无感 | 零风险窗口自灰度；出问题摘挂载即回纯 Logto |
+| 2. 新版 App 发布（第 4 步后） | 新增登录/注册全走新轨 | 见下方「老版本仍会产生新用户」与迁移桥决策点 |
+| 3. 观察与收敛 | Logto 轨道占比下行 | requireAuth 打点 `track: loginbase\|logto`（第 3 步实现时即埋），退役决策唯一数据源 |
+| 4. 退役 | 删 fallback 与 logto-auth.js，注销 Logto 租户 | `app_users` 映射永久保留（已是正式数据） |
+
+**老版本仍会产生新用户（阶段 2 的精确表述）**：老版本的注册入口是 Logto 托管的，Logto 侧账号可能继续新增——但来源池封闭且萎缩（应用商店只分发新版，能在老版注册的仅限「装了老版未登录」的存量装机）。总流量趋势下行，但不单调、不为零。**设计对此的免疫就是持续映射**（任务 5）：晚到的 Logto 用户升级后按 email / `github_user_id` 收敛到同一 `user_id`，无需补丁快照。
+
+**收敛杠杆**（阶段 3 看打点数据再选，力度递增）：① 不干预，靠版本自然覆盖；② Logto 租户关闭新注册（保留登录）——账号层面真·只衰不增，代价是老版新用户注册失败需配升级引导；③ 最低版本强更，Logto 轨道清零进阶段 4。
+
+**待决策点**（不阻塞第 3 步动工）：
+1. **迁移桥**：新版 App 无 Logto 栈，老用户升级默认「重新登录一次」；可选加一次性端点 `POST /auth/migrate`（有效 Logto token 换发 loginbase token 对，服务端验签 + 映射 + 签发，几十行），换零打扰升级，Logto 退役时一起拆。倾向做，实现前再确认。
+2. **退役阈值**：如「Logto 轨道占比 <1% 持续 4 周」或按老版本 DAU 绝对值，阶段 3 有数据后再定。
 **前置风险检查**：~~动工前查 Resend dashboard 里 Tono 的 QQ/163 邮箱域送达率与退信率~~ ✅ 2026-08-12 已查证达标（TrendingAI 自有域 trendingai.cn 一手数据：15 天 2,167 封、送达 99.12%、qq.com 验证码全达、163.com 零退信；详见 design.md 风险节），信道绿灯。
 
 ## 第 4 步：KMP 客户端 + TrendingAI 登录 UI
