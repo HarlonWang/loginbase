@@ -36,7 +36,9 @@
 **验收**：Tono-Server 现有测试全绿（唯一标准）。**回滚**：Tono 侧单 commit 切换，revert 即回退。
 **明确不做**：钩子、双语模板、oauth、任何行为变更。
 
-## 第 2 步：钩子化 + 增量（1.0.0）
+## 第 2 步：钩子化 + 增量（1.0.0）✅ 2026-08-12 完成
+
+> 执行实录：protocol.md 先行落笔并与实现同 commit（协议纪律自此生效）；Sourcery 审查修掉一个真问题——redirect 白名单 startsWith 可被子域伪装绕过（开放重定向 → otc 泄露），改结构化校验；库侧 70 测试、Tono 侧 67 测试全绿；en+brand=Tono 模板逐字节锁定，Tono 切换后邮件零变化；生产冒烟含 /auth/me（业务侧路由）与 oauth not_configured（未配置即不存在）。
 
 1. `onVerified` 抽钩子：users upsert + 试用逻辑移回 Tono 的钩子实现；`/me` 移回 Tono 自有路由（用 `login.middleware`）；
 2. `onEvent` 钩子（默认实现保持单行 JSON console.log）；

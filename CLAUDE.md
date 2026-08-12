@@ -21,4 +21,4 @@
 
 ## 当前状态
 
-第 0/1 步已完成（2026-08-12）：`loginbase@0.1.1` 上线 npm（trusted publishing + provenance，「tag 即发布」链路已验证），Tono-Server 已切换依赖（-718 行）并部署生产（67 测试全绿 = 抽取验收；生产冒烟通过）。`kotlin/` 未创建。下一步 = 第 2 步钩子化（onVerified/onEvent、zh/en 模板、github-oauth，见 `docs/plan.md`）。遗留观察项：Tono 生产 refresh 事件日志（rescued/reuse_revoked/guardrail_revoked 频率应与切换前一致）。
+第 0/1/2 步已完成（2026-08-12）：`loginbase@1.0.0` 上线 npm——钩子化（onVerified/onEvent）、zh/en 模板、github-oauth（otc 中转 + 白名单结构化校验）、TTL 配置；`docs/protocol.md` 为契约唯一权威，协议纪律已生效。Tono-Server 已接钩子（onVerified 建号送试用 + 自有 /auth/me）并部署生产，67 测试全绿 = 等价性验收。`kotlin/` 未创建。下一步 = 第 3 步 TrendingAI 接入（见 `docs/plan.md`）。遗留观察项：Tono 生产 refresh 事件日志频率对比。
