@@ -1,0 +1,20 @@
+# 仅供测试使用：@cloudflare/vitest-pool-workers 据此搭 miniflare 环境（本地 D1/KV 模拟）。
+# 本包是库，不部署 Worker；[vars] 均为测试假值，非真实凭据。
+name = "loginbase-test"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "loginbase-test"
+database_id = "loginbase-test"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "EMAIL_CODES"
+id = "loginbase-test"
+
+[vars]
+JWT_SECRET = "test-jwt-secret"
+EMAIL_FROM_ADDRESS = "Loginbase Test <test@example.com>"
+RESEND_API_KEY = "test-resend-key"
