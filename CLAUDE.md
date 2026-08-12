@@ -21,4 +21,4 @@
 
 ## 当前状态
 
-落地第 1 步进行中：`src/`、`test/`、CI 已建（第 0 步完成），Tono auth 六模块 + 45 测试已平移、全绿；`kotlin/` 未创建。剩余 = 发 0.1.0 + Tono-Server 切换（见 `docs/plan.md` 第 1 步 4-6，均为外部动作需确认）。
+第 0/1 步已完成（2026-08-12）：`loginbase@0.1.1` 上线 npm（trusted publishing + provenance，「tag 即发布」链路已验证），Tono-Server 已切换依赖（-718 行）并部署生产（67 测试全绿 = 抽取验收；生产冒烟通过）。`kotlin/` 未创建。下一步 = 第 2 步钩子化（onVerified/onEvent、zh/en 模板、github-oauth，见 `docs/plan.md`）。遗留观察项：Tono 生产 refresh 事件日志（rescued/reuse_revoked/guardrail_revoked 频率应与切换前一致）。

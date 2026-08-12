@@ -39,7 +39,7 @@ Kotlin 包    wang.harlon.loginbase
 
 ## 状态与路线
 
-当前进行到**落地第 1 步**（服务端平移：库侧完成，48 测试全绿；待发 0.1.0 + Tono-Server 切换）。落地顺序：
+**落地第 1 步已完成**（2026-08-12）：`loginbase@0.1.1` 上线 npm（trusted publishing + provenance），Tono-Server 已切换依赖并部署生产（其 67 测试全绿即抽取验收）。下一步 = 第 2 步钩子化。落地顺序：
 
 1. 从 Tono-Server 平移服务端代码与测试，Tono-Server 改为依赖本包（其现有测试即抽取验收）
 2. 钩子化（`onVerified` 用户回调）+ zh/en 邮件模板 + github-oauth 可选插件
