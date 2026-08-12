@@ -33,8 +33,9 @@ jobs:
       - name: Verify
         run: npm run typecheck && npm run build && npm test
 
+      # --allow-same-version：package.json 与 tag 一致时（版本已在发版 PR 里 bump）不报错
       - name: Sync version from tag
-        run: npm version "$GITHUB_REF_NAME" --no-git-tag-version
+        run: npm version "$GITHUB_REF_NAME" --no-git-tag-version --allow-same-version
 
       - name: Publish to npm
         run: npm publish
