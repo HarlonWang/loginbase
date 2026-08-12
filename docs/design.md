@@ -88,4 +88,5 @@ const auth = createLogin({
 ## 已知风险与验证项
 
 - **Resend 对 QQ/163 送达率**：Tono 生产在用同款信道（send.tonote.app）——查 Resend dashboard 的 Tono 邮箱域分布与退信率即可拿到实证；不达标则 OTP 信道单独换阿里云 DirectMail（约 ¥2/千封）。
+  - **2026-08-12 实证达标，风险关闭**：查证发现 TrendingAI 自有 Resend 账号（trendingai.cn 域，Logto 验证码 + newsletter 均经其发送），近 15 天 2,167 封、送达率 99.12%、退信率 0.88%（permanent 仅 2 封）、投诉率 0%；qq.com 验证码全 Delivered（15 天仅 1 封 newsletter 退信）、163.com 零退信、foxmail/aliyun 均 Delivered。迁移 loginbase 后信道不变（同账号同域），数据直接适用；DirectMail 备选无需启用。Tono 侧另账号（send.tonote.app）当日实测 gmail 3 秒送达。
 - TrendingAI 侧迁移的完整风险清单见 [logto-替换方案-调研.md](logto-替换方案-调研.md)。

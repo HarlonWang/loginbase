@@ -59,7 +59,7 @@
 6. github-oauth 插件接入（deepLink 白名单 = TrendingAI scheme）。
 
 **验收**：新注册走 loginbase 全流程可用；存量用户邮箱登录命中原 `user_id`（数据不丢）；老 App Logto token 照常可用。**回滚**：双轨本身即回滚机制，摘掉 `/auth` 挂载即回到纯 Logto。
-**前置风险检查**：动工前查 Resend dashboard 里 Tono 的 QQ/163 邮箱域送达率与退信率（design.md 风险节），不达标先解决信道再接入。
+**前置风险检查**：~~动工前查 Resend dashboard 里 Tono 的 QQ/163 邮箱域送达率与退信率~~ ✅ 2026-08-12 已查证达标（TrendingAI 自有域 trendingai.cn 一手数据：15 天 2,167 封、送达 99.12%、qq.com 验证码全达、163.com 零退信；详见 design.md 风险节），信道绿灯。
 
 ## 第 4 步：KMP 客户端 + TrendingAI 登录 UI
 
