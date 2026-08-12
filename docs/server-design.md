@@ -154,6 +154,8 @@ users 表**不归库**——库对 `user_id` 只存不读，用户表结构、�
 | `cooldown:{email}` | `"1"` | 60s |
 | `rl:email:{email}` | 计数 | 600s |
 | `rl:ip:{ip}` | 计数 | 3600s |
+| `oauth:state:{state}` | OAuth state（单次使用） | 600s |
+| `oauth:otc:{otc}` | 一次性授权码载荷（单次使用） | 60s |
 
 键无库前缀，**建议消费方给 loginbase 独立 KV namespace**（Tono 的 `EMAIL_CODES` 即此模式）；共用 namespace 的键前缀配置列入将来项。
 
@@ -262,5 +264,6 @@ test/             # vitest + @cloudflare/vitest-pool-workers
 - **revoked session 行无清理**：轮换链会持续增长（Tono 现状即如此），将来项 = 消费方 cron 定期清 `revoked_at < now - 保留期` 的行；库文档给出建议 SQL，不内置调度。
 - strict middleware（对敏感端点每请求查 session 吊销状态，牺牲零查库换即时吊销）——留口不实现。
 - KV 键前缀 / sessions 表名前缀（与消费方命名冲突时）——YAGNI，先约定独立 namespace。
-- `refreshTtlMs` 生效逻辑、双语模板、github-oauth：第 2 步。
 - 邮件 transport 接口抽象（DirectMail 备选落地时再抽）。
+
+> 2026-08-12 第 2 步完成：`refreshTtlMs`（滑动过期）、`accessTtlSeconds`、双语模板、github-oauth 均已实现，wire 契约见 protocol.md。

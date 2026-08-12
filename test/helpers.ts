@@ -1,14 +1,67 @@
-// 从 Tono-Server test/helpers.ts 平移：initDb 只保留 auth 相关的 users + sessions
-// （todos/notes/labels 为 Tono 业务表，与 auth 无关，不随库走）；
-// app 由 createLogin 工厂构建（Tono 侧原为其完整应用）。
+// 测试夹具：onVerified 复刻 Tono 语义（users upsert + 90 天试用 + user 载荷），
+// 使平移自 Tono 的 HTTP 测试在钩子化后原样通过——夹具即钩子化等价性的对照组。
 import { env } from "cloudflare:workers";
 import { createLogin, createSession, signAccessToken } from "../src/index";
+import type { VerifiedResult } from "../src/index";
+
+const TRIAL_PERIOD_MS = 90 * 24 * 60 * 60 * 1000;
+
+export async function tonoLikeOnVerified(email: string): Promise<VerifiedResult> {
+  const now = Date.now();
+  let user = await env.DB.prepare(
+    "SELECT id, email, pro_expires_at, created_at FROM users WHERE email = ?"
+  )
+    .bind(email)
+    .first<{
+      id: string;
+      email: string;
+      pro_expires_at: number | null;
+      created_at: number;
+    }>();
+
+  let isNewUser = false;
+  if (!user) {
+    const id = crypto.randomUUID();
+    const proExpiresAt = now + TRIAL_PERIOD_MS;
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, pro_expires_at, created_at) VALUES (?, ?, ?, ?)"
+    )
+      .bind(id, email, proExpiresAt, now)
+      .run();
+    user = { id, email, pro_expires_at: proExpiresAt, created_at: now };
+    isNewUser = true;
+  }
+
+  return {
+    userId: user.id,
+    isNewUser,
+    user: {
+      id: user.id,
+      email: user.email,
+      isPro: user.pro_expires_at != null && user.pro_expires_at > now,
+      proExpiresAt: user.pro_expires_at,
+      createdAt: user.created_at,
+    },
+  };
+}
 
 export const login = createLogin<Cloudflare.Env>((e) => ({
   db: e.DB,
   kv: e.EMAIL_CODES,
   jwt: { secret: e.JWT_SECRET },
-  email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+  email: {
+    resendApiKey: e.RESEND_API_KEY,
+    from: e.EMAIL_FROM_ADDRESS,
+    brand: "Tono",
+  },
+  socials: {
+    github: {
+      clientId: "test-client-id",
+      clientSecret: "test-client-secret",
+      allowedRedirects: ["testapp://auth"],
+    },
+  },
+  onVerified: ({ email }) => tonoLikeOnVerified(email),
 }));
 
 const app = login.app;
@@ -21,6 +74,11 @@ export async function initDb() {
   for (const stmt of schema.split(";").filter((s) => s.trim())) {
     await env.DB.prepare(stmt).run();
   }
+}
+
+export async function wipeKv() {
+  const list = await env.EMAIL_CODES.list();
+  for (const key of list.keys) await env.EMAIL_CODES.delete(key.name);
 }
 
 export interface TestUser {

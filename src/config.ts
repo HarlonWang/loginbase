@@ -1,10 +1,54 @@
 import type { EmailConfig } from "./email.js";
 
+// onVerified：库与 App 的唯一用户语义边界。身份确认成功后调用；
+// 返回的 isNewUser / user 原样透传进 verify / oauth exchange 响应。
+// 抛错 → 500 internal（验证码已焚；会话在钩子成功后才创建，不留孤儿 session）。
+export interface VerifiedIdentity {
+  email: string;
+  provider: "email" | "github";
+  providerUserId?: string;
+  requestMeta: { ip?: string; userAgent?: string };
+}
+
+export interface VerifiedResult {
+  userId: string;
+  isNewUser?: boolean;
+  user?: unknown;
+}
+
+export type OnVerified = (
+  identity: VerifiedIdentity
+) => Promise<VerifiedResult> | VerifiedResult;
+
+// onEvent：结构化事件出口（refresh 的 rescued / reuse_revoked / guardrail_revoked 等），
+// 默认实现为单行 JSON console.log（配合 Workers Logs）。字段永不含 token/code 明文。
+export type OnEvent = (event: Record<string, unknown>) => void;
+
+export interface GithubSocialConfig {
+  clientId: string;
+  clientSecret: string;
+  /** OAuth 回跳 deepLink 白名单（前缀匹配），如 ["trendingai://auth"] */
+  allowedRedirects: string[];
+  /** GitHub OAuth App 注册的回调地址；缺省由请求 origin + basePath 推导 */
+  callbackUrl?: string;
+}
+
 export interface LoginConfig {
   db: D1Database;
   kv: KVNamespace;
-  jwt: { secret: string };
+  jwt: {
+    secret: string;
+    /** access token TTL，默认 3600s */
+    accessTtlSeconds?: number;
+  };
   email: EmailConfig;
+  session?: {
+    /** refresh 会话滑动过期（每次轮换重新起算）；null/缺省 = 不过期 */
+    refreshTtlMs?: number | null;
+  };
+  onVerified: OnVerified;
+  onEvent?: OnEvent;
+  socials?: { github?: GithubSocialConfig };
 }
 
 export interface CreateLoginOptions {
