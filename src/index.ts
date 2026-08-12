@@ -1,8 +1,8 @@
 import type { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
-import { memoizeResolver, type CreateLoginOptions, type LoginConfig } from "./config";
-import { createAuthApp } from "./handler";
-import { createAuthMiddleware, type AuthVariables } from "./middleware";
+import { memoizeResolver, type CreateLoginOptions, type LoginConfig } from "./config.js";
+import { createAuthApp } from "./handler.js";
+import { createAuthMiddleware, type AuthVariables } from "./middleware.js";
 
 export interface Login<TEnv> {
   /** Hono 实例（已含 basePath）。Hono 消费方：app.route("/", login.app) */
@@ -30,15 +30,15 @@ export function createLogin<TEnv = unknown>(
   };
 }
 
-export type { LoginConfig, CreateLoginOptions } from "./config";
-export type { AuthVariables } from "./middleware";
-export { createAuthMiddleware } from "./middleware";
+export type { LoginConfig, CreateLoginOptions } from "./config.js";
+export type { AuthVariables } from "./middleware.js";
+export { createAuthMiddleware } from "./middleware.js";
 
 // 底层模块出口：verifyAccessToken 供裸 Worker 的 requireAuth 双轨；
 // session/code 等出口供消费方测试工具（如 Tono test/helpers）复用。
-export * from "./code";
-export * from "./email";
-export * from "./rate_limit";
-export * from "./session";
-export * from "./token";
-export { logEvent } from "./log";
+export * from "./code.js";
+export * from "./email.js";
+export * from "./rate_limit.js";
+export * from "./session.js";
+export * from "./token.js";
+export { logEvent } from "./log.js";
