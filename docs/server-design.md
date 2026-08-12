@@ -95,18 +95,31 @@ const { sub: userId, sid: sessionId } = await verifyAccessToken(secret, token);
 
 该信号有先天噪声：**丢回执的诚实重试与真盗用在信号上完全同形**（都是「旧 token 再现」），竞态容忍设计的全部分歧就在去噪方式。
 
-**与 Logto 及业界对照**（2026-08-12 查证；Logto 构建在 node-oidc-provider 上，refresh 语义即该库语义）：
+**与 Logto 及业界对照**（2026-08-12 查证；Logto 构建在 node-oidc-provider 上，refresh 语义即该库语义；Supabase 结论来自 supabase/auth `internal/tokens/service.go` 源码核对）：
 
 | 派别 | 代表 | 重用「去噪」方式 |
 |---|---|---|
 | 零容忍 | Logto / node-oidc-provider | 无——consumed token 再现即报 `invalid_grant` 并撤销整条 grant 链 |
-| 时间窗宽限 | Okta（默认 30s，可配 0–60s）、Auth0（Rotation Overlap Period，仅最近一代可重用）、Supabase（reuse interval 默认 10s） | 窗口内当重试，窗口外当盗用 |
+| 时间窗宽限 | Okta（默认 30s，可配 0–60s）、Auth0（Rotation Overlap Period，仅最近一代可重用） | 窗口内当重试，窗口外当盗用 |
+| 状态判定 + 重发（混合） | Supabase | 第一分支查链状态：被提交的旧 token 是当前活跃 token 的直接 parent → 判丢回执，**把活跃 token 原样重发**（此分支无时间限制）；否则落入 reuse interval 时间窗兜底（默认 10s），窗外杀 family |
 | 不轮换 | Firebase（长期单 token）、Duende IdentityServer（2024 默认改回可重用） | 放弃重用信号，靠账号事件吊销；立场是信号信噪比太差，推荐 sender-constrained（DPoP）直接免疫盗用 |
-| 状态判定（本库） | Tono / loginbase | 链未被推进（直接后继未使用）→ 判诚实重试，救活；已推进 → 双方共存的铁证，杀链；护栏 1h/3 次封交替刷新 |
+| 状态判定 + 再轮换（本库） | Tono / loginbase | 链未被推进（直接后继未使用）→ 判诚实重试，从后继**再轮换发全新对**；已推进 → 双方共存的铁证，杀链；救活计数护栏 1h/3 次封交替 |
 
-- 规范基线 RFC 9700（OAuth 2.0 Security BCP，2025-01）：sender-constrained 或 rotation + reuse detection 二选一；宽限窗口是各家在此之上的工程妥协。
+- 规范基线 RFC 9700（OAuth 2.0 Security BCP，2025-01）：sender-constrained 或 rotation + reuse detection 二选一；一切宽限/救活都是各家实现层的工程妥协，规范未置一词。
 - Logto 侧移动 App 属 public client → 每次刷新必轮换 + 重用零容忍，TrendingAI 2026-08-01 事故是这个安全姿态的机制性结果（非 bug）。另两处差异：oidc-provider 对机密客户端仅在 ≥70% TTL 时轮换、轮换续命上限一年；本库恒轮换、refresh 不过期。
-- 状态判定 vs 时间窗的取舍：**覆盖面更广**——App 被杀/长断网后数分钟的诚实重试，时间窗（10~60s）一律误杀（温和版 Logto 病灶），状态判定只看链有没有前进；**暴露面更窄**——时间窗内攻击者持旧 token 同样能换新证，状态判定多一道「链未推进」前置条件 + 次数护栏；代价是救活路径多两次 D1 查询（查后继 + 护栏计数），对低频 auth 端点无关痛痒。
+- **判定条件业界已有，组合是 Tono 自选**：「链未推进 → 判诚实重试」与 Supabase 的 parent-of-active 分支机制等价（其源码注释同样写着 "client was not able to store the result"），有大规模生产验证。Tono 增量在两处：救活时**再轮换**而非重发——重发会让盗用方与本人收敛到同一 token、永久共存且检测永不触发；再轮换强制双方持证分叉、任一方救活即作废另一方的证，交替可见——以及 `rescued_at` **计数护栏**——交替可见才可封顶，未见开源先例。
+- 状态判定 vs 时间窗的取舍：**误杀率最低**——App 被杀/长断网后分钟级的诚实重试，时间窗（10~60s）一律误杀（温和版 Logto 病灶），状态判定只看链有没有前进。**代价是旧证长尾**——链休眠期间（后继一直未用）被盗旧 token 无时限可救活；两个折扣：能偷到旧证的向量几乎总能同时偷到新证（纯旧证场景很窄）、双方一旦都活跃即进入交替并被护栏在 1h 内杀链封顶；将来可用 `refreshTtlMs`（已留口）给链加整体过期收紧。救活路径多两次 D1 查询（后继 + 护栏计数），低频端点无关痛痒。
+- 场景矩阵（✅ 正确处理 / ❌ 误杀或漏检）：
+
+| 场景 | 零容忍 | 时间窗 | Supabase 混合 | 本库 |
+|---|---|---|---|---|
+| 丢回执秒级重试 | ❌ 误杀 | ✅ | ✅ | ✅ |
+| 丢回执分钟级重试（App 被杀/断网） | ❌ 误杀 | ❌ 误杀 | ✅ | ✅ |
+| 盗旧证、链已推进 | ✅ 杀链 | ✅ | ✅ | ✅ |
+| 盗链头、双方交替 | ✅ 首碰即杀 | ✅ | ❌ **收敛共存，永不可检测** | ✅ 护栏 1h 内杀链 |
+| 同设备并发刷新 | ❌ 误杀 | ✅ | ✅ 重发幂等收敛 | ⚠️ 收敛但耗护栏配额 |
+
+- 无全绿列：一、二、五行是可用性，三、四行是安全性，各派选了牺牲哪头。本库以「客户端单飞刷新」的配合义务换其余全绿——**护栏 3 次/1h 的预算按客户端有单飞纪律设定**（并发双刷新会触发救活、消耗配额），这是 loginbase-kt 把「token 获取互斥串行化」列为需求清单的服务端原因，两端是一套机制的两半。
 - 本库场景是「公开客户端 + 无 DPoP 条件」，不轮换派路径不适用；design.md「救活机制从服务端根治 Logto 时代轮换竞态」的论断经此对照成立。
 
 ## 数据模型
