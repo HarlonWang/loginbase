@@ -30,7 +30,15 @@ export function createLogin<TEnv = unknown>(
   };
 }
 
-export type { LoginConfig, CreateLoginOptions } from "./config.js";
+export type {
+  LoginConfig,
+  CreateLoginOptions,
+  VerifiedIdentity,
+  VerifiedResult,
+  OnVerified,
+  OnEvent,
+  GithubSocialConfig,
+} from "./config.js";
 export type { AuthVariables } from "./middleware.js";
 export { createAuthMiddleware } from "./middleware.js";
 

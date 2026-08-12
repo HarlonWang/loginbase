@@ -18,6 +18,8 @@ export interface CreateSessionInput {
   userId: string;
   userAgent?: string;
   ip?: string;
+  /** 会话过期时刻（epoch ms）；缺省/null = 不过期 */
+  expiresAt?: number | null;
 }
 
 export interface CreateSessionOutput {
@@ -54,12 +56,13 @@ export async function createSession(
   await db
     .prepare(
       `INSERT INTO sessions (id, user_id, family_id, expires_at, created_at, last_used_at, user_agent, ip, revoked_at, replaced_by_id)
-       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
     )
     .bind(
       sessionId,
       input.userId,
       familyId,
+      input.expiresAt ?? null,
       now,
       now,
       input.userAgent ?? null,
@@ -82,7 +85,8 @@ export async function findSession(
 export async function rotateSession(
   db: D1Database,
   oldSessionId: string,
-  meta: { userAgent?: string; ip?: string }
+  meta: { userAgent?: string; ip?: string },
+  expiresAt: number | null = null
 ): Promise<CreateSessionOutput | null> {
   const old = await findSession(db, oldSessionId);
   if (!old) return null;
@@ -95,12 +99,13 @@ export async function rotateSession(
     db
       .prepare(
         `INSERT INTO sessions (id, user_id, family_id, expires_at, created_at, last_used_at, user_agent, ip, revoked_at, replaced_by_id)
-         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
       )
       .bind(
         newId,
         old.user_id,
         old.family_id,
+        expiresAt,
         now,
         now,
         meta.userAgent ?? old.user_agent,
@@ -151,7 +156,8 @@ export type RescueResult =
 export async function tryRescueSession(
   db: D1Database,
   revoked: SessionRow,
-  meta: { userAgent?: string; ip?: string }
+  meta: { userAgent?: string; ip?: string },
+  expiresAt: number | null = null
 ): Promise<RescueResult> {
   if (revoked.replaced_by_id === null) return { status: "not_eligible" };
 
@@ -170,12 +176,13 @@ export async function tryRescueSession(
     db
       .prepare(
         `INSERT INTO sessions (id, user_id, family_id, expires_at, created_at, last_used_at, user_agent, ip, revoked_at, replaced_by_id, rescued_at)
-         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`
       )
       .bind(
         newId,
         successor.user_id,
         successor.family_id,
+        expiresAt,
         now,
         now,
         meta.userAgent ?? successor.user_agent,

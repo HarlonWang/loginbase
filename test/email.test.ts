@@ -6,6 +6,7 @@ import { sendCodeEmail, type EmailConfig } from "../src/email";
 const emailConfig: EmailConfig = {
   resendApiKey: env.RESEND_API_KEY,
   from: env.EMAIL_FROM_ADDRESS,
+  brand: "Tono",
 };
 
 describe("sendCodeEmail", () => {

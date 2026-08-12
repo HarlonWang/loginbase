@@ -1,8 +1,28 @@
+import { enTemplates } from "./templates/en.js";
+import { zhTemplates } from "./templates/zh.js";
+
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
+
+export interface EmailTemplates {
+  subject(code: string): string;
+  html(code: string): string;
+  text(code: string): string;
+}
 
 export interface EmailConfig {
   resendApiKey: string;
   from: string;
+  /** 品牌名，注入内置模板的标题与正文；不影响 templates 整体覆盖 */
+  brand?: string;
+  /** 内置模板语言，默认 "en" */
+  locale?: "en" | "zh";
+  /** 整体覆盖模板；提供时 brand/locale 不生效 */
+  templates?: EmailTemplates;
+}
+
+export function resolveTemplates(config: EmailConfig): EmailTemplates {
+  if (config.templates) return config.templates;
+  return config.locale === "zh" ? zhTemplates(config.brand) : enTemplates(config.brand);
 }
 
 export async function sendCodeEmail(
@@ -10,12 +30,13 @@ export async function sendCodeEmail(
   email: string,
   code: string
 ): Promise<void> {
+  const templates = resolveTemplates(config);
   const body = {
     from: config.from,
     to: [email],
-    subject: `Your Tono verification code: ${code}`,
-    html: renderHtml(code),
-    text: renderText(code),
+    subject: templates.subject(code),
+    html: templates.html(code),
+    text: templates.text(code),
   };
 
   const res = await fetch(RESEND_ENDPOINT, {
@@ -30,18 +51,4 @@ export async function sendCodeEmail(
     const msg = await res.text().catch(() => "");
     throw new Error(`Resend failed: ${res.status} ${msg}`);
   }
-}
-
-function renderHtml(code: string): string {
-  return `
-    <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:24px;">
-      <h2 style="margin:0 0 16px 0;">Your Tono verification code</h2>
-      <p style="font-size:32px;letter-spacing:8px;font-weight:700;margin:16px 0;">${code}</p>
-      <p style="color:#666;font-size:14px;">This code expires in 10 minutes. If you didn't request it, you can ignore this email.</p>
-    </div>
-  `;
-}
-
-function renderText(code: string): string {
-  return `Your Tono verification code is ${code}. It expires in 10 minutes.`;
 }

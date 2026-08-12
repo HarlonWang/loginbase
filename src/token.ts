@@ -10,13 +10,14 @@ export interface AccessPayload extends JWTPayload {
 export async function signAccessToken(
   secret: string,
   userId: string,
-  sessionId: string
+  sessionId: string,
+  ttlSeconds: number = ACCESS_TTL_SECONDS
 ): Promise<string> {
   const key = new TextEncoder().encode(secret);
   return new SignJWT({ sub: userId, sid: sessionId })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${ACCESS_TTL_SECONDS}s`)
+    .setExpirationTime(`${ttlSeconds}s`)
     .sign(key);
 }
 

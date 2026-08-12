@@ -1,7 +1,6 @@
-// 从 Tono-Server src/auth/handler.ts 原样平移（落地第 1 步，铁律 3）。
-// 仅两类机械改动：c.env.X 读取改为 config 注入、import 路径调整。
-// 内联的用户 upsert / 90 天试用 / /me 端点为 Tono 业务语义，暂留库内，
-// 第 2 步钩子化（onVerified）时移回 Tono。
+// 母本为 Tono-Server src/auth/handler.ts（第 1 步平移）；第 2 步钩子化：
+// 用户语义（users upsert / 试用 / /me）经 onVerified 移回 App 侧，
+// 事件出口接 onEvent，refreshTtlMs / accessTtlSeconds 可配生效。
 import { Hono } from "hono";
 import {
   generateCode,
@@ -23,13 +22,11 @@ import {
   revokeSession,
   revokeAllForUser,
 } from "./session.js";
-import { signAccessToken } from "./token.js";
+import { signAccessToken, ACCESS_TTL_SECONDS } from "./token.js";
 import { createAuthMiddleware, type AuthVariables } from "./middleware.js";
 import { logEvent } from "./log.js";
-import type { LoginConfig } from "./config.js";
-
-// 新用户注册赠送的 Pro 试用时长（3 个月）
-const TRIAL_PERIOD_MS = 90 * 24 * 60 * 60 * 1000;
+import { registerGithubOauth } from "./plugins/github.js";
+import type { LoginConfig, VerifiedResult } from "./config.js";
 
 export function createAuthApp<TEnv>(
   getConfig: (env: TEnv) => LoginConfig,
@@ -38,6 +35,14 @@ export function createAuthApp<TEnv>(
   const authMiddleware = createAuthMiddleware(getConfig);
   const auth = new Hono<{ Variables: AuthVariables }>().basePath(basePath);
   const cfg = (c: { env: unknown }) => getConfig(c.env as TEnv);
+  const emit = (c: { env: unknown }) => cfg(c).onEvent ?? logEvent;
+  const accessTtl = (c: { env: unknown }) =>
+    cfg(c).jwt.accessTtlSeconds ?? ACCESS_TTL_SECONDS;
+  const sessionExpiry = (c: { env: unknown }) => {
+    const ttl = cfg(c).session?.refreshTtlMs ?? null;
+    // == null 而非 truthiness：0 是数值语义的「立即过期」，不是「不过期」
+    return ttl == null ? null : Date.now() + ttl;
+  };
 
   auth.post("/code/send", async (c) => {
     const body = await c.req
@@ -90,58 +95,41 @@ export function createAuthApp<TEnv>(
 
     await deleteCode(cfg(c).kv, email);
 
-    const now = Date.now();
-    let user = await cfg(c)
-      .db.prepare(
-        "SELECT id, email, pro_expires_at, created_at FROM users WHERE email = ?"
-      )
-      .bind(email)
-      .first<{
-        id: string;
-        email: string;
-        pro_expires_at: number | null;
-        created_at: number;
-      }>();
+    const userAgent = c.req.header("User-Agent") ?? undefined;
+    const ip = c.req.header("CF-Connecting-IP") ?? undefined;
 
-    let isNewUser = false;
-    if (!user) {
-      const id = crypto.randomUUID();
-      const proExpiresAt = now + TRIAL_PERIOD_MS;
-      await cfg(c)
-        .db.prepare(
-          "INSERT INTO users (id, email, pro_expires_at, created_at) VALUES (?, ?, ?, ?)"
-        )
-        .bind(id, email, proExpiresAt, now)
-        .run();
-      user = { id, email, pro_expires_at: proExpiresAt, created_at: now };
-      isNewUser = true;
+    // 用户语义（建号/试用/档案）全部在 App 侧钩子内完成；
+    // 钩子失败 → 500（码已焚，重新发码），会话在钩子成功后才创建。
+    let verified: VerifiedResult;
+    try {
+      verified = await cfg(c).onVerified({
+        email,
+        provider: "email",
+        requestMeta: { ip, userAgent },
+      });
+    } catch {
+      return c.json({ error: "internal" }, 500);
     }
 
-    const userAgent = c.req.header("User-Agent") ?? null;
-    const ip = c.req.header("CF-Connecting-IP") ?? null;
     const { sessionId, refreshToken } = await createSession(cfg(c).db, {
-      userId: user.id,
-      userAgent: userAgent ?? undefined,
-      ip: ip ?? undefined,
+      userId: verified.userId,
+      userAgent,
+      ip,
+      expiresAt: sessionExpiry(c),
     });
 
     const accessToken = await signAccessToken(
       cfg(c).jwt.secret,
-      user.id,
-      sessionId
+      verified.userId,
+      sessionId,
+      accessTtl(c)
     );
 
     return c.json({
       accessToken,
       refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        isPro: user.pro_expires_at != null && user.pro_expires_at > now,
-        proExpiresAt: user.pro_expires_at,
-        createdAt: user.created_at,
-      },
-      isNewUser,
+      ...(verified.user !== undefined ? { user: verified.user } : {}),
+      ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
     });
   });
 
@@ -170,9 +158,14 @@ export function createAuthApp<TEnv>(
       // 已轮换的 token 被再次提交：可能是"丢回执的诚实重试"，先尝试救活。
       const userAgent = c.req.header("User-Agent") ?? undefined;
       const ip = c.req.header("CF-Connecting-IP") ?? undefined;
-      const rescue = await tryRescueSession(cfg(c).db, row, { userAgent, ip });
+      const rescue = await tryRescueSession(
+        cfg(c).db,
+        row,
+        { userAgent, ip },
+        sessionExpiry(c)
+      );
       if (rescue.status === "rescued") {
-        logEvent({
+        emit(c)({
           event: "refresh",
           outcome: "rescued",
           userId: row.user_id,
@@ -182,13 +175,14 @@ export function createAuthApp<TEnv>(
         const accessToken = await signAccessToken(
           cfg(c).jwt.secret,
           row.user_id,
-          rescue.session.sessionId
+          rescue.session.sessionId,
+          accessTtl(c)
         );
         return c.json({ accessToken, refreshToken: rescue.session.refreshToken });
       }
       // 救活不成立 → 判定真重用，撤销整条会话链。guardrail 与 not_eligible 分开记录。
       await revokeFamily(cfg(c).db, row.family_id);
-      logEvent({
+      emit(c)({
         event: "refresh",
         outcome:
           rescue.status === "guardrail" ? "guardrail_revoked" : "reuse_revoked",
@@ -211,7 +205,12 @@ export function createAuthApp<TEnv>(
 
     const userAgent = c.req.header("User-Agent") ?? undefined;
     const ip = c.req.header("CF-Connecting-IP") ?? undefined;
-    const next = await rotateSession(cfg(c).db, sessionId, { userAgent, ip });
+    const next = await rotateSession(
+      cfg(c).db,
+      sessionId,
+      { userAgent, ip },
+      sessionExpiry(c)
+    );
     if (!next) {
       return c.json(
         { error: "invalid_refresh_token", reason: "rotate_failed" },
@@ -222,36 +221,11 @@ export function createAuthApp<TEnv>(
     const accessToken = await signAccessToken(
       cfg(c).jwt.secret,
       row.user_id,
-      next.sessionId
+      next.sessionId,
+      accessTtl(c)
     );
 
     return c.json({ accessToken, refreshToken: next.refreshToken });
-  });
-
-  // 返回当前登录用户的最新信息（含实时 Pro 状态），供客户端在前台/启动时刷新本地缓存，
-  // 无需重新登录即可感知服务端 pro_expires_at 的变化（续费 / 到期 / 手动赠送）。
-  auth.get("/me", authMiddleware, async (c) => {
-    const userId = c.get("userId");
-    const row = await cfg(c)
-      .db.prepare(
-        "SELECT id, email, pro_expires_at, created_at FROM users WHERE id = ?"
-      )
-      .bind(userId)
-      .first<{
-        id: string;
-        email: string;
-        pro_expires_at: number | null;
-        created_at: number;
-      }>();
-    if (!row) return c.json({ error: "user_not_found" }, 404);
-    const now = Date.now();
-    return c.json({
-      id: row.id,
-      email: row.email,
-      isPro: row.pro_expires_at != null && row.pro_expires_at > now,
-      proExpiresAt: row.pro_expires_at,
-      createdAt: row.created_at,
-    });
   });
 
   auth.delete("/sessions", authMiddleware, async (c) => {
@@ -266,6 +240,8 @@ export function createAuthApp<TEnv>(
     await revokeAllForUser(cfg(c).db, userId);
     return c.body(null, 204);
   });
+
+  registerGithubOauth(auth, getConfig, basePath);
 
   return auth;
 }
