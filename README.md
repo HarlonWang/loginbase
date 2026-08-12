@@ -20,6 +20,7 @@ loginbase/
 ├── kotlin/                  # KMP 客户端库（独立 gradle 工程）
 ├── docs/
 │   ├── design.md            # 路线与仓库设计决策
+│   ├── server-design.md     # 服务端技术方案（公共 API/协议草案/会话模型/平移策略）
 │   ├── naming.md            # 命名讨论记录
 │   ├── protocol.md          # API 契约（唯一权威）——代码平移时落笔
 │   └── logto-替换方案-调研.md # 背景调研（自 TrendingProjects 迁入）
