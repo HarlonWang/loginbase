@@ -27,7 +27,10 @@ export type OnEvent = (event: Record<string, unknown>) => void;
 export interface GithubSocialConfig {
   clientId: string;
   clientSecret: string;
-  /** OAuth 回跳 deepLink 白名单（前缀匹配），如 ["trendingai://auth"] */
+  /**
+   * OAuth 回跳 deepLink 白名单，如 ["trendingai://auth"]。
+   * 结构化匹配：scheme + host 精确一致，path 允许前缀扩展（防开放重定向）。
+   */
   allowedRedirects: string[];
   /** GitHub OAuth App 注册的回调地址；缺省由请求 origin + basePath 推导 */
   callbackUrl?: string;

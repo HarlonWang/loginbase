@@ -40,7 +40,8 @@ export function createAuthApp<TEnv>(
     cfg(c).jwt.accessTtlSeconds ?? ACCESS_TTL_SECONDS;
   const sessionExpiry = (c: { env: unknown }) => {
     const ttl = cfg(c).session?.refreshTtlMs ?? null;
-    return ttl ? Date.now() + ttl : null;
+    // == null 而非 truthiness：0 是数值语义的「立即过期」，不是「不过期」
+    return ttl == null ? null : Date.now() + ttl;
   };
 
   auth.post("/code/send", async (c) => {

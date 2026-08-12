@@ -27,8 +27,29 @@ interface OtcPayload {
   user?: unknown;
 }
 
+// 结构化校验而非字符串前缀：startsWith("https://example.com") 会被
+// https://example.com.evil.com 绕过（开放重定向 → otc 泄露给攻击者域）。
+// scheme + host 精确匹配，path 只允许白名单条目的前缀扩展。
 function redirectAllowed(redirect: string, github: GithubSocialConfig): boolean {
-  return github.allowedRedirects.some((prefix) => redirect.startsWith(prefix));
+  let target: URL;
+  try {
+    target = new URL(redirect);
+  } catch {
+    return false;
+  }
+  return github.allowedRedirects.some((allowed) => {
+    let base: URL;
+    try {
+      base = new URL(allowed);
+    } catch {
+      return false;
+    }
+    return (
+      target.protocol === base.protocol &&
+      target.host === base.host &&
+      target.pathname.startsWith(base.pathname)
+    );
+  });
 }
 
 function withParam(url: string, key: string, value: string): string {
@@ -143,7 +164,7 @@ export function registerGithubOauth<TEnv>(
       userId: verified.userId,
       userAgent,
       ip,
-      expiresAt: refreshTtlMs ? Date.now() + refreshTtlMs : null,
+      expiresAt: refreshTtlMs == null ? null : Date.now() + refreshTtlMs,
     });
     const accessToken = await signAccessToken(
       cfg(c).jwt.secret,

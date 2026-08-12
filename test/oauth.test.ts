@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { env } from "cloudflare:workers";
 import { createLogin } from "../src/index";
+import type { VerifiedIdentity } from "../src/index";
 import { app, initDb, wipeKv } from "./helpers";
 
 function mockGithub(fetchSpy: ReturnType<typeof vi.spyOn>, opts: {
@@ -196,6 +197,105 @@ describe("GET /auth/oauth/github/callback + POST /auth/oauth/exchange", () => {
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid_otc" });
+  });
+});
+
+describe("redirect 白名单结构化校验（防开放重定向）", () => {
+  const httpsLogin = createLogin<Cloudflare.Env>((e) => ({
+    db: e.DB,
+    kv: e.EMAIL_CODES,
+    jwt: { secret: e.JWT_SECRET },
+    email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+    socials: {
+      github: {
+        clientId: "cid",
+        clientSecret: "cs",
+        allowedRedirects: ["https://app.example.com/cb"],
+      },
+    },
+    onVerified: () => ({ userId: "u-1" }),
+  }));
+
+  async function start(redirect: string) {
+    return httpsLogin.app.request(
+      `/auth/oauth/github/start?redirect=${encodeURIComponent(redirect)}`,
+      { method: "GET" },
+      env
+    );
+  }
+
+  it("scheme+host 精确、path 前缀扩展 → 允许", async () => {
+    expect((await start("https://app.example.com/cb")).status).toBe(302);
+    expect((await start("https://app.example.com/cb/deeper?x=1")).status).toBe(302);
+  });
+
+  it("子域伪装 / 换 host / 非法 URL → 400", async () => {
+    for (const evil of [
+      "https://app.example.com.evil.com/cb", // startsWith 时代可绕过的经典载荷
+      "https://evil.com/https://app.example.com/cb",
+      "http://app.example.com/cb", // scheme 降级
+      "not a url",
+    ]) {
+      const res = await start(evil);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid_redirect" });
+    }
+  });
+});
+
+describe("onVerified 契约（github provider）", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(async () => {
+    await initDb();
+    await wipeKv();
+    await env.DB.prepare("DELETE FROM sessions").run();
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+  });
+  afterEach(() => fetchSpy.mockRestore());
+
+  it("钩子收到 provider=github、providerUserId、归一化 email 与 requestMeta", async () => {
+    let seen: VerifiedIdentity | undefined;
+    const spyLogin = createLogin<Cloudflare.Env>((e) => ({
+      db: e.DB,
+      kv: e.EMAIL_CODES,
+      jwt: { secret: e.JWT_SECRET },
+      email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+      socials: {
+        github: {
+          clientId: "cid",
+          clientSecret: "cs",
+          allowedRedirects: ["testapp://auth"],
+        },
+      },
+      onVerified: (identity) => {
+        seen = identity;
+        return { userId: "u-gh" };
+      },
+    }));
+
+    const startRes = await spyLogin.app.request(
+      "/auth/oauth/github/start?redirect=testapp%3A%2F%2Fauth",
+      { method: "GET" },
+      env
+    );
+    const state = new URL(startRes.headers.get("Location")!).searchParams.get("state")!;
+    mockGithub(fetchSpy, { userId: 98765 });
+
+    const cb = await spyLogin.app.request(
+      `/auth/oauth/github/callback?code=gh-code&state=${state}`,
+      {
+        method: "GET",
+        headers: { "User-Agent": "oauth-ua", "CF-Connecting-IP": "8.8.8.8" },
+      },
+      env
+    );
+    expect(cb.status).toBe(302);
+    expect(seen).toEqual({
+      email: "octo@example.com",
+      provider: "github",
+      providerUserId: "98765",
+      requestMeta: { ip: "8.8.8.8", userAgent: "oauth-ua" },
+    });
   });
 });
 
