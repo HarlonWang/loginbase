@@ -14,7 +14,6 @@
 import { createLogin } from "loginbase";
 
 const login = createLogin<Env>((env) => ({
-  basePath: "/auth",                          // 默认 /auth
   db: env.DB,
   kv: env.EMAIL_CODES,
   jwt: { secret: env.JWT_SECRET, accessTtlSeconds: 3600 },
@@ -29,7 +28,7 @@ const login = createLogin<Env>((env) => ({
   onVerified: async (identity) => ({ userId, isNewUser, user }),
   onEvent: (e) => console.log(JSON.stringify(e)),   // 默认即此实现
   socials: { github: { clientId, clientSecret } },  // 可选插件（第 2 步）
-}));
+}), { basePath: "/auth" });  // basePath 为静态选项，默认 /auth
 
 // 出口
 login.app          // Hono 实例（已含 basePath），Hono 消费方 app.route("/", login.app)
@@ -43,7 +42,7 @@ import { verifyAccessToken } from "loginbase";
 const { sub: userId, sid: sessionId } = await verifyAccessToken(secret, token);
 ```
 
-**工厂为什么收 resolver `(env) => config` 而不是 config 对象**：Workers 的 binding 只在请求期以 `env` 出现，模块顶层拿不到；resolver 让库在首个请求时取配置并按 isolate 记忆化（`env` 对象在同一 isolate 内恒定，`WeakMap<env, config>`）。两种消费形态都只需一行：
+**工厂为什么收 resolver `(env) => config` 而不是 config 对象**：Workers 的 binding 只在请求期以 `env` 出现，模块顶层拿不到；resolver 让库在首个请求时取配置并按 isolate 记忆化（`env` 对象在同一 isolate 内恒定，`WeakMap<env, config>`）。**`basePath` 例外**（2026-08-12 实现时修订）：Hono app 在构建期（模块加载时）就需要路由前缀，而 config 到请求期才可得，时序矛盾——故 basePath 为 `createLogin` 第二参数的静态选项，不进 config。两种消费形态都只需一行：
 
 - Hono 消费方（Tono-Server）：`app.route("/", login.app)`——前缀由库内 `basePath` 承担，不再用 `app.route("/auth", …)` 外挂前缀，避免双重前缀。
 - 裸 JS Worker（github-ai-trending-api）：`if (pathname.startsWith("/auth")) return login.fetch(request, env, ctx)`。

@@ -39,7 +39,7 @@ Kotlin 包    wang.harlon.loginbase
 
 ## 状态与路线
 
-当前为**骨架阶段**（仅文档）。落地顺序：
+当前进行到**落地第 1 步**（服务端平移：库侧完成，48 测试全绿；待发 0.1.0 + Tono-Server 切换）。落地顺序：
 
 1. 从 Tono-Server 平移服务端代码与测试，Tono-Server 改为依赖本包（其现有测试即抽取验收）
 2. 钩子化（`onVerified` 用户回调）+ zh/en 邮件模板 + github-oauth 可选插件

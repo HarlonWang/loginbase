@@ -1,2 +1,44 @@
-// 占位入口：落地第 1 步平移时替换为 createLogin / verifyAccessToken 等真实出口。
-export const PLACEHOLDER = "replaced-in-step-1" as const;
+import type { Hono } from "hono";
+import type { MiddlewareHandler } from "hono";
+import { memoizeResolver, type CreateLoginOptions, type LoginConfig } from "./config";
+import { createAuthApp } from "./handler";
+import { createAuthMiddleware, type AuthVariables } from "./middleware";
+
+export interface Login<TEnv> {
+  /** Hono 实例（已含 basePath）。Hono 消费方：app.route("/", login.app) */
+  app: Hono<{ Variables: AuthVariables }>;
+  /** 裸 JS Worker 一行挂载：if (pathname.startsWith("/auth")) return login.fetch(req, env, ctx) */
+  fetch: (
+    request: Request,
+    env: TEnv,
+    ctx?: ExecutionContext
+  ) => Response | Promise<Response>;
+  /** Hono 中间件：Bearer 校验，set userId / sessionId */
+  middleware: MiddlewareHandler<{ Variables: AuthVariables }>;
+}
+
+export function createLogin<TEnv = unknown>(
+  resolve: (env: TEnv) => LoginConfig,
+  options: CreateLoginOptions = {}
+): Login<TEnv> {
+  const getConfig = memoizeResolver(resolve);
+  const app = createAuthApp(getConfig, options.basePath ?? "/auth");
+  return {
+    app,
+    fetch: (request, env, ctx) => app.fetch(request, env, ctx),
+    middleware: createAuthMiddleware(getConfig),
+  };
+}
+
+export type { LoginConfig, CreateLoginOptions } from "./config";
+export type { AuthVariables } from "./middleware";
+export { createAuthMiddleware } from "./middleware";
+
+// 底层模块出口：verifyAccessToken 供裸 Worker 的 requireAuth 双轨；
+// session/code 等出口供消费方测试工具（如 Tono test/helpers）复用。
+export * from "./code";
+export * from "./email";
+export * from "./rate_limit";
+export * from "./session";
+export * from "./token";
+export { logEvent } from "./log";
