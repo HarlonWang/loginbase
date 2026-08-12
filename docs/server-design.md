@@ -184,6 +184,7 @@ onVerified: async (identity: {
   email: string;                       // 已归一化
   provider: "email" | "github";
   providerUserId?: string;             // OAuth 时的外部身份 ID
+  providerProfile?: unknown;           // OAuth provider 原始档案（github = /user JSON），App 建档取资料用；1.1.0 起
   requestMeta: { ip?: string; userAgent?: string };
 }) => Promise<{
   userId: string;                      // 进 JWT sub 与 sessions.user_id
