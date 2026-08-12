@@ -11,7 +11,7 @@
 ## 公共 API
 
 ```ts
-import { createLogin } from "@harlonwang/loginbase";
+import { createLogin } from "loginbase";
 
 const login = createLogin<Env>((env) => ({
   basePath: "/auth",                          // 默认 /auth
@@ -39,7 +39,7 @@ login.middleware   // Hono 中间件：Bearer 校验，set userId / sessionId
 
 ```ts
 // 低层出口（不依赖工厂实例，供裸 Worker 的 requireAuth 双轨等场景）
-import { verifyAccessToken } from "@harlonwang/loginbase";
+import { verifyAccessToken } from "loginbase";
 const { sub: userId, sid: sessionId } = await verifyAccessToken(secret, token);
 ```
 

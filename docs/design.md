@@ -55,7 +55,7 @@ const auth = createLogin({
 
 ## 分发
 
-- **服务端**：npm registry 正式发包 `@harlonwang/loginbase`（scoped 公开包），tag 触发 CI 发布，用 npm trusted publishing（GitHub Actions OIDC，免长期 token，带 provenance）。
+- **服务端**：npm registry 正式发包 `loginbase`（裸名，无 scope），tag 触发 CI 发布，用 npm trusted publishing（GitHub Actions OIDC，免长期 token，带 provenance）。
   - 初版方案曾选 git-tag 依赖（`github:HarlonWang/loginbase#semver:^1.0.0`），理由是零发布设施；2026-08-10 改为 registry，前提变化是已有 npm 账号与发包经验，「零设施」优势缩水（KMP 侧本就要 CI，npm 只是同一 tag 触发下多一个 job），而 registry 的收益对 auth 库全踩在点上：
     1. **版本不可变**——registry 同一版本号不能重发不同内容，git tag 可被 force 移动；对 auth 库是供应链完整性属性，与依赖最小集红线同源；
     2. **解除「仓库必须 public」硬约束**——git 依赖时代 Workers Builds 云端装依赖无凭据、私有仓库必失败；registry 之后 public 与否降为普通偏好；

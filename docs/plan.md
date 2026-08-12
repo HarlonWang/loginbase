@@ -7,7 +7,7 @@
 | 步骤 | 产物与版本 | 验收点 | 前置 |
 |---|---|---|---|
 | 0. 发布设施 | 包骨架 + CI 两条 workflow | CI 测试绿；npm 首发打通 | 无 |
-| 1. 平移 | `@harlonwang/loginbase` 0.1.x（Tono 专用） | Tono-Server 现有测试全绿 | 0 |
+| 1. 平移 | `loginbase` 0.1.x（Tono 专用） | Tono-Server 现有测试全绿 | 0 |
 | 2. 钩子化 | 1.0.0（泛化，可供外部消费） | Tono 测试依旧绿（等价性）+ 钩子路径新测试 | 1 |
 | 3. TrendingAI 接入 | github-ai-trending-api 双轨上线 | 新注册走 loginbase；存量用户映射回原 user_id | 2 |
 | 4. KMP 客户端 | `wang.harlon:loginbase-kt` + TrendingAI 登录 UI | 两端协议契约测试对齐；新版登录全流程可用 | 2（骨架可先行） |
@@ -17,7 +17,7 @@
 
 1. 包骨架：`package.json`（ESM、`exports` 单入口、`files: dist+migrations`、hono peer / jose dep）、`tsconfig` ×2（开发/构建）、vitest + `@cloudflare/vitest-pool-workers` + 测试用 `wrangler.toml`（D1/KV binding）。
 2. CI：`build.yml`（push/PR 跑测试）+ `publish.yml`（tag `[0-9]+.[0-9]+.[0-9]+*` 触发；npm job 先行，第 4 步再加 maven job——同一 workflow，一个 tag 锁两端）。
-3. npm trusted publishing：在 npmjs 侧为 `@harlonwang/loginbase` 配置 GitHub Actions OIDC；**若首次发布不被 trusted publishing 支持，首版本地手动 `npm publish` 兜底，之后全走 CI**。
+3. npm trusted publishing：在 npmjs 侧为 `loginbase` 配置 GitHub Actions OIDC；**若首次发布不被 trusted publishing 支持，首版本地手动 `npm publish` 兜底，之后全走 CI**。
 4. 版本线约定：0.1.x = 平移期 Tono 专用；1.0.0 = 钩子化完成、对外可用；此后协议演进走 1.x，**版本号即协议版本**。
 
 ## 第 1 步：平移（0.1.x，铁律 3 辖区）
@@ -28,7 +28,7 @@
 2. `migrations/0001_sessions.sql`（Tono 0002+0004 合并端态）；
 3. 测试平移：五组 `auth_*.test.ts` + 五个单元测试进包内，Resend 用 fetch mock；
 4. 发 `0.1.0`；
-5. Tono-Server 切换：删 `src/auth/` 与 `src/middleware/auth.ts`，依赖 `@harlonwang/loginbase`，挂载 `app.route("/auth", auth)` → `app.route("/", login.app)`；
+5. Tono-Server 切换：删 `src/auth/` 与 `src/middleware/auth.ts`，依赖 `loginbase`，挂载 `app.route("/auth", auth)` → `app.route("/", login.app)`；
 6. 部署 Tono 生产，观察 `refresh` 事件日志（rescued / reuse_revoked / guardrail_revoked 频率与上线前一致）。
 
 **验收**：Tono-Server 现有测试全绿（唯一标准）。**回滚**：Tono 侧单 commit 切换，revert 即回退。
