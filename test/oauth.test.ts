@@ -31,7 +31,10 @@ function mockGithub(fetchSpy: ReturnType<typeof vi.spyOn>, opts: {
       );
     }
     if (url.startsWith("https://api.github.com/user")) {
-      return new Response(JSON.stringify({ id: userId }), { status: 200 });
+      return new Response(
+        JSON.stringify({ id: userId, login: "octocat", avatar_url: "https://a.png" }),
+        { status: 200 }
+      );
     }
     throw new Error(`unexpected fetch: ${url}`);
   });
@@ -294,6 +297,7 @@ describe("onVerified 契约（github provider）", () => {
       email: "octo@example.com",
       provider: "github",
       providerUserId: "98765",
+      providerProfile: { id: 98765, login: "octocat", avatar_url: "https://a.png" },
       requestMeta: { ip: "8.8.8.8", userAgent: "oauth-ua" },
     });
   });

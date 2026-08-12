@@ -7,6 +7,12 @@ export interface VerifiedIdentity {
   email: string;
   provider: "email" | "github";
   providerUserId?: string;
+  /**
+   * OAuth provider 的原始档案（github = GitHub /user 响应 JSON），
+   * 供 App 建档时取 login/avatar 等资料；email provider 恒缺省。
+   * 形状归 provider 所有，库不解释、不裁剪。
+   */
+  providerProfile?: unknown;
   requestMeta: { ip?: string; userAgent?: string };
 }
 

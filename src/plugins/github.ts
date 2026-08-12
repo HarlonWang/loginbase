@@ -129,7 +129,7 @@ export function registerGithubOauth<TEnv>(
     };
     const userRes = await fetch(GITHUB_API_USER, { headers: ghHeaders });
     if (!userRes.ok) return c.redirect(withParam(redirect, "error", "oauth_failed"), 302);
-    const ghUser = (await userRes.json()) as { id: number };
+    const ghUser = (await userRes.json()) as { id: number } & Record<string, unknown>;
 
     const emailsRes = await fetch(GITHUB_API_EMAILS, { headers: ghHeaders });
     const emails = emailsRes.ok
@@ -153,6 +153,7 @@ export function registerGithubOauth<TEnv>(
         email: email.trim().toLowerCase(),
         provider: "github",
         providerUserId: String(ghUser.id),
+        providerProfile: ghUser, // GitHub /user 原始 JSON，App 建档取资料用
         requestMeta: { ip, userAgent },
       });
     } catch {
