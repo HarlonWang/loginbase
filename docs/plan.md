@@ -159,6 +159,8 @@
 
 **硬约束（验收项）**：① D1 不得明文存 token——`public_repo` token 泄露等于能改用户所有公开仓库；② 上线前 scope 必须配平，否则新版用户 star 全挂（现生产 loginbase 侧 scope 仍是 `user:email`，因新版未发故当前无害）。
 
+**服务端侧已上线（2026-08-13）**：github-ai-trending-api PR #32 合并部署（`50e28b6`）。migration 039 加 `app_users.gh_token_enc/gh_token_updated_at`（备份先行：`app_users` 238 行导出 410K）；AES-GCM 加密，`GH_TOKEN_KEY` 已配置、密钥存档 `HarlonWang/secrets` 的 `trendingai-api/`；`onVerified` 顺带存 token，`onLinked` 实现绑定（冲突拒绝、绝不改绑）；`GET/DELETE /api/github/token` 响应形状对齐 Logto Account API。测试 +12、全量 551 绿。**配置期发现的坑**：secret 经管道配置带尾随换行 → `atob` 抛错被 catch 吞成「未配置」→ 明明配了却不存 token 且完全静默，已加 `.trim()` 防御。**冒烟**：未登录/坏 token/过期 token 均 401；邮箱登录用户取 token 得 404（预期）；顺带在生产实证 `POST /auth/refresh` 可用且**确实轮换** refresh token（此前只有测试覆盖）。注：`github-ai-trending-api` 是私有仓，Sourcery 不可用，该仓 PR 无 AI 审查。
+
 **后补优化（不阻塞第 4 步）**：增量授权（登录只要 `user:email`，首次 star 时再补 `public_repo`）与 GitHub 撤销授权后的重新授权路径，都可复用议题 2 的 link 流程，待新版上线后再按数据评估。
 
 ### 已登录用户绑定第二身份（议题 2，2026-08-13 定案）
