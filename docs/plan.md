@@ -131,7 +131,7 @@
 
 0. ✅ **服务端补齐**（`loginbase@1.2.0` 已发布，见上方实录与下方两个议题小节）：`socials.github.scope` 可配、`onVerified` 的 identity 带 `providerAccessToken`（+ 可选 `verifiedEmails`）、**link 流程**（`link/start` + callback 分流 + `onLinked` 钩子）；protocol.md 与实现同 commit；
 1. ✅ **已建**（2026-08-13）：`HarlonWang/loginbase-kt`，本地 `/Users/wanghl/loginbase-kt`。gradle 骨架照抄 kmp-webview（vanniktech、android + iosArm64 + iosSimulatorArm64、坐标 `wang.harlon:loginbase-kt`）；CI 两条——build 在 ubuntu 只跑 `testAndroidHostTest`（ubuntu 编不了 iOS，故 iOS 编译在本地验过三 target 全绿），publish 在 macos 由裸版本号 tag 触发。骨架内容：`PROTOCOL_VERSION` + `AuthError`/`RefreshFailure` 错误码枚举及契约测试（未知 wire 值落 UNKNOWN，服务端将来加码不炸老客户端）。**发布前待办：新仓的四个 Maven Central secrets 尚未配置**（值在 HarlonWang/secrets 的 `maven-publishing/`，需本人操作）；
-2. 核心实现：`AuthClient`（send/verify/refresh/signOut 的 Ktor 封装）、`TokenStore` 接口 + multiplatform-settings 默认实现、`AuthState` flow、**单飞 refresh**（护栏预算的客户端前提，见 server-design.md 场景矩阵）；
+2. ✅ **已实现**（2026-08-13，loginbase-kt PR #2）：`AuthClient`（send/verify/refresh/signOut/exchange/link 的 Ktor 封装）、`TokenStore` 接口 + Android(SharedPreferences)/iOS(NSUserDefaults) 平台实现（**同步落盘**，multiplatform-settings 已弃用，理由见 design.md 依赖收紧）、`AuthState` flow、**单飞 refresh**（互斥锁 + 进锁后重读复用，护栏预算的客户端前提，见 server-design.md 场景矩阵）；
 3. LogtoAuthManager 竞态经验逐条固化核对：token 获取互斥串行化、丢回执重试（与救活配合）、时钟偏差归因、invalid_refresh_token 判定与登出策略；
 4. 协议契约测试：对 `protocol.md` 的错误码/字段断言两端各写一套（客户端侧 ktor MockEngine）；客户端仓 publish workflow 打通（macos runner，凭证从 HarlonWang/secrets 配 GitHub Secrets）；
 5. TrendingAI shared 接入（commonMain 登录 UI），发版切换；分仓版协议纪律（服务端 + protocol.md 同 commit + 客户端仓跟进 issue）从此全面生效。
