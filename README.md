@@ -39,7 +39,7 @@ Kotlin 包    wang.harlon.loginbase
 
 ## 状态与路线
 
-**落地第 1、2 步已完成**（2026-08-12）：`loginbase@1.0.0` 上线 npm（钩子化 + zh/en 模板 + github-oauth + TTL 配置，协议契约见 docs/protocol.md），Tono-Server 已接 onVerified 钩子并部署生产。下一步 = 第 3 步 TrendingAI 接入。落地顺序：
+**落地第 1~3 步已完成**（2026-08-13）：`loginbase@1.1.0` 上线 npm；Tono-Server（钩子化）与 github-ai-trending-api（双轨迁移：loginbase 优先 + Logto fallback）均已部署生产并通过分层验收。下一步 = 第 4 步 KMP 客户端。落地顺序：
 
 1. 从 Tono-Server 平移服务端代码与测试，Tono-Server 改为依赖本包（其现有测试即抽取验收）
 2. 钩子化（`onVerified` 用户回调）+ zh/en 邮件模板 + github-oauth 可选插件

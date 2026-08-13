@@ -49,7 +49,9 @@
 
 **验收**：Tono 测试依旧全绿（钩子化等价性证明）+ 库内新增钩子/模板/oauth 路径测试。Tono 的 wire 格式（`user.isPro` 等）经钩子透传保持不变，线上客户端无感。
 
-## 第 3 步：TrendingAI 接入
+## 第 3 步：TrendingAI 接入 ✅ 2026-08-13 完成（D 层观察期进行中）
+
+> 执行实录：库侧发现 VerifiedIdentity 需带 providerProfile → loginbase 1.1.0（含 Sourcery 揪出的敏感字段白名单裁剪）；双轨实现初版让老轨道行为漂移、44 个既有测试报警，改为「Logto 轨道字节级不变」后 525 既有测试零修改全绿；基础设施五项（KV/JWT_SECRET/migration 038 备份先行/email 回填 49 行/GitHub OAuth App 新旧分立）全部就绪后合并部署。C 层验收：①新轨邮箱全流程（zh 模板生产首秀，Gmail 秒收）②③oauth 全流程命中原账号（sub=原 user_id、pro:True 完好读出）+ state/otc 重放防护意外实证 ④track 打点生产实锤 ⑤回滚演练实测（/auth 404 业务 200，恢复后会话跨回滚存活）。验收手法备忘：GitHub 授权按钮有真人手势检测（合成点击无效）；Chrome 对自定义 scheme 跳转会二次加载 callback 造成 invalid_state 伪影（真实 App 不受影响）；wrangler kv list 是管理面、对 60s TTL 键不可靠，验收用 AUTH_DEEPLINK 临时指 https 页面从地址栏取 otc（用后即删）。断言 3（老 App Logto token 照常）依据 A 层 6 用例 + 生产老流量无异常，D 层观察期持续确认。
 
 1. 基础设施：TrendingAI 的 D1 跑 sessions migration、新建独立 KV namespace、Resend 配置 TrendingAI 发件域、Worker secrets（JWT_SECRET 等）；
 2. `index.js` 挂载：`if (pathname.startsWith("/auth")) return login.fetch(request, env, ctx)`；

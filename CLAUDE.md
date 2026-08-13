@@ -21,4 +21,4 @@
 
 ## 当前状态
 
-第 0/1/2 步已完成（2026-08-12）：`loginbase@1.0.0` 上线 npm——钩子化（onVerified/onEvent）、zh/en 模板、github-oauth（otc 中转 + 白名单结构化校验）、TTL 配置；`docs/protocol.md` 为契约唯一权威，协议纪律已生效。Tono-Server 已接钩子（onVerified 建号送试用 + 自有 /auth/me）并部署生产，67 测试全绿 = 等价性验收。`kotlin/` 未创建。下一步 = 第 3 步 TrendingAI 接入（见 `docs/plan.md`）。遗留观察项：Tono 生产 refresh 事件日志频率对比。
+第 0/1/2/3 步已完成（2026-08-13）：`loginbase@1.1.0`（providerProfile + 安全白名单）上线；Tono-Server 与 github-ai-trending-api 均已接入并部署生产——TrendingAI 为双轨（loginbase 优先 + Logto fallback 不断老版本，lib/auth.js，track 打点为退役数据源），email 回填 49 行（哨兵基线 94 只应降）、GitHub OAuth App 新旧分立（旧改名 Legacy 待阶段 4 删）。C 层验收全过（含 oauth 命中原账号、回滚演练实测）。`kotlin/` 未创建。下一步 = 第 4 步 KMP 客户端（含 C 方案升级过渡 UX，见 plan.md）。观察项：TrendingAI 双轨 track 占比、email 哨兵、Tono refresh 事件频率。
