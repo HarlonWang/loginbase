@@ -110,7 +110,7 @@
 
 | 时点 | 动作 | 性质 |
 |---|---|---|
-| ① 部署前 | ✅ 2026-08-13 已执行。对账结果：app_users 232 行（全有 logto_sub）× Logto 254 用户（22 个注册过未建档）；null-email 143 行中 **49 行有 Logto primaryEmail，全部回填成功**；冲突/重复/覆盖均为 0。**边界修正**：Logto 侧无 email 的达 94 行（远超「个位数」预期——GitHub 邮箱私有时 Logto 拿不到，rawData 亦空），其邮箱**在任何系统都不存在**、非回填可解；自愈机制：这批人升级后用 GitHub 登录时 loginbase 取 verified email 经 COALESCE 补上，此后邮箱登录亦可命中。M2M 凭证（密钥名 loginbase-migration，365 天）保留在 Logto 侧供③终扫 | 一次性，已完成 |
+| ① 部署前 | ✅ 2026-08-13 已执行。对账结果：app_users 232 行（全有 logto_sub）× Logto 254 用户（22 个注册过未建档）；null-email 143 行中 **49 行有 Logto primaryEmail，全部回填成功**；冲突/重复/覆盖均为 0。**边界修正**：Logto 侧无 email 的达 94 行（远超「个位数」预期）。**根因 2026-08-13 查明**（查 Logto 控制台 GitHub connector）：其 scope 只配了 `public_repo`、从未含 `user:email`，GitHub 因此不开放 `/user/emails`，Logto 只能读 `/user` 公开档案的 email 字段——用户没设公开邮箱就是空。**不是拿不到，是没要**；这批人的邮箱在 Logto 侧确实不存在、非回填可解。自愈机制：这批人升级后用 GitHub 登录时 loginbase 取 verified email 经 COALESCE 补上（loginbase 插件要的正是 `user:email`，两边 scope 恰好互补），此后邮箱登录亦可命中。M2M 凭证（密钥名 loginbase-migration，365 天）保留在 Logto 侧供③终扫 | 一次性，已完成 |
 | ② 观察期 | 哨兵 SQL（例行看一眼）：`SELECT COUNT(*) FROM app_users WHERE logto_sub IS NOT NULL AND email IS NULL`——回填后**只应下降**（重登/升级自然填补）；上升 = 上表某个「无洞」假设被证伪，回来修。**基线：94（2026-08-13 回填后）** | 烟雾报警器，零成本 |
 | ③ 阶段 4 退役前 | 最后一次导出 + 终态回填残余（预期为从未活动的沉睡账号）——**租户注销后 Logto 数据永久消失，此为最后机会**，退役 checklist 硬项 | 一次性 |
 
@@ -127,13 +127,37 @@
 
 > **2026-08-13 定：客户端走独立仓 `HarlonWang/loginbase-kt`**（原计划的 `kotlin/` 子目录取消，理由见 design.md「两个仓库」节）。`protocol.md` 仍只住服务端仓，客户端仓不留副本；两仓独立版本线，tag 各为裸版本号，客户端从 `0.1.0` 起步。
 
+0. **服务端补齐**（`loginbase@1.2.0`，客户端动工前完成，见下方「GitHub token 取回」小节）：`socials.github.scope` 可配 + `onVerified` 的 identity 带 `providerAccessToken`；
 1. 新建 `HarlonWang/loginbase-kt` 仓 + gradle 工程骨架（照抄 kmp-webview：vanniktech 插件、android + iosArm64 + iosSimulatorArm64、坐标 `wang.harlon:loginbase-kt`）+ 其自有 build/publish workflow（publish 照抄本仓 `publish.yml`，runner 换 macos）——可与第 3 步并行；
 2. 核心实现：`AuthClient`（send/verify/refresh/signOut 的 Ktor 封装）、`TokenStore` 接口 + multiplatform-settings 默认实现、`AuthState` flow、**单飞 refresh**（护栏预算的客户端前提，见 server-design.md 场景矩阵）；
 3. LogtoAuthManager 竞态经验逐条固化核对：token 获取互斥串行化、丢回执重试（与救活配合）、时钟偏差归因、invalid_refresh_token 判定与登出策略；
 4. 协议契约测试：对 `protocol.md` 的错误码/字段断言两端各写一套（客户端侧 ktor MockEngine）；客户端仓 publish workflow 打通（macos runner，凭证从 HarlonWang/secrets 配 GitHub Secrets）；
 5. TrendingAI shared 接入（commonMain 登录 UI），发版切换；分仓版协议纪律（服务端 + protocol.md 同 commit + 客户端仓跟进 issue）从此全面生效。
 
-**验收**：loginbase-kt 发布可拉取；TrendingAI 新版邮箱 + GitHub 登录全流程可用；竞态清单逐条有对应测试或代码注释交代；升级过渡 UX 按下述 C 方案验收。
+**验收**：loginbase-kt 发布可拉取；TrendingAI 新版邮箱 + GitHub 登录全流程可用；竞态清单逐条有对应测试或代码注释交代；升级过渡 UX 按下述 C 方案验收；**GitHub 数据面（star / following / feed / profile）在新版上零退化**。
+
+### GitHub token 取回（议题 1，2026-08-13 定案）
+
+**问题**：TrendingAI 的整个 GitHub 数据面依赖用户的 GitHub access token，现由 Logto Secret Vault 托管（`LogtoAccountApi.fetchGithubToken` → `/api/my-account/identities/github/access-token`，客户端 `GithubTokenProvider` 进程内缓存、不落盘）。Logto 一退役这条链就断，且它是**阶段 4 退役的隐形卡点**——只要还在用，租户就注销不了。依赖面不止 star：
+
+| 调用 | 无用户 token 的后果 |
+|---|---|
+| `PUT/GET /user/starred/...`（star 读写） | 完全不可用（写还需 `public_repo`） |
+| following / repos / feed / 计数 | 技术上匿名可读，但匿名限流 60 次/h 按 IP 算（移动网络 NAT 共享出口更易撞），实际浏览撑不住；认证后 5000/h 按 token 算 |
+
+**定案：钩子透传 + App 自存**（排除「库托管」= Secret Vault 等价物，理由见 design.md 定位边界；排除「服务端全代理」= 客户端 GitHub 数据面全改，工作量最大且配额仍按用户 token 算、无额外收益）。
+
+| 侧 | 改动 |
+|---|---|
+| 库（1.2.0） | ① `socials.github.scope` 可配（默认 `user:email`）；② `onVerified` 的 identity 带 `providerAccessToken`（只透传、不存储、不再分发） |
+| TrendingAI 后端 | `onVerified` 里把 token **加密**存 D1（AES-GCM，密钥走 Worker secret）+ 自建取回端点（Bearer 鉴权，等价替换 Account API） |
+| TrendingAI 客户端 | `GithubTokenProvider` 只换取回 URL（`LogtoAccountApi` → 自家 API）；**4 个 provider/ViewModel 与 `RepoStarService` 一行不改**，保持进程内缓存、不落盘的现有姿态 |
+
+**scope 定案：`user:email public_repo`**，登录时一次要全，不做增量授权。依据是 2026-08-13 查证的 Logto 现状（GitHub connector scope = `public_repo` **单项**，Secret Vault 开启）——重的那个 `public_repo` 用户现在就在授权，新版只多一条"读取邮箱地址"，**无体验退化**；两边 scope 恰好互补（Logto 有重的缺轻的，loginbase 反之），这也是那 94 行无 email 的根因（见第 3 步边界修正）。GitHub OAuth App 没有比 `public_repo` 更细的 star 权限（要 per-repo 得换 GitHub App，架构完全不同），维持现状是唯一选择。
+
+**硬约束（验收项）**：① D1 不得明文存 token——`public_repo` token 泄露等于能改用户所有公开仓库；② 上线前 scope 必须配平，否则新版用户 star 全挂（现生产 loginbase 侧 scope 仍是 `user:email`，因新版未发故当前无害）。
+
+**后补优化（不阻塞第 4 步）**：增量授权（登录只要 `user:email`，首次 star 时再补 `public_repo`）与 GitHub 撤销授权后的重新授权路径，都落在议题 2 的 link 流程上，待其就绪后再评估。
 
 ### 升级过渡 UX（C 方案，2026-08-12 定）
 

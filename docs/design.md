@@ -6,6 +6,7 @@
 
 - **解决的问题**：登录 + 注册入口层——邮箱验证码（发码/验码）、社交 OAuth、会话生命周期（签发/刷新/轮换/吊销）。
 - **不解决的问题**：用户档案、权益/订阅、跨 App 统一账号。用户语义经 `onVerified` 钩子还给各 App 业务侧（TrendingAI 接 `app_users` 映射，Tono 接 users 表送试用）。
+- **第三方 provider 的 API 凭据同属「不解决」**（2026-08-13 定）：OAuth 流程换到的 provider access token 经 `onVerified` **透传**给 App，库既不存储也不再分发——存不存、怎么发是 App 的产品决策（TrendingAI 要用它调 GitHub REST，Tono 永不需要）。理由与本节边界同源：auth 库存第三方凭据是攻击面的实质升级，而 token 只是 OAuth 流程的自然副产品，扔掉它才是信息损失。落地见 plan.md 第 4 步。
 - 命名上不叫 user-什么 正是这个边界的体现（见 [naming.md](naming.md)）。
 
 ## 路线选择：公共库，而非中心化服务

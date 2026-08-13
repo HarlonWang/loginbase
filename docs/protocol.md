@@ -89,7 +89,7 @@ Bearer 鉴权。吊销该用户全部会话。成功 `204`；无/坏 token `401`
 
 ### GET /oauth/github/start?redirect={deepLink}
 
-校验 `redirect` 命中服务端白名单（`allowedRedirects`，结构化匹配：scheme + host 精确一致、path 允许前缀扩展，防开放重定向）→ 生成 `state`（32B random，KV 存 600s、单次使用）→ `302` 跳转 GitHub authorize（scope `user:email`）。
+校验 `redirect` 命中服务端白名单（`allowedRedirects`，结构化匹配：scheme + host 精确一致、path 允许前缀扩展，防开放重定向）→ 生成 `state`（32B random，KV 存 600s、单次使用）→ `302` 跳转 GitHub authorize（scope 取服务端配置 `socials.github.scope`，默认 `user:email`）。
 
 | 失败 | 状态码 | 响应 |
 |---|---|---|

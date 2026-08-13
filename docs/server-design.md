@@ -5,7 +5,7 @@
 ## 范围与非目标
 
 - **做**：邮箱验证码（发码/验码）、会话生命周期（签发/刷新/轮换/重用检测/救活/吊销）、业务接口鉴权（middleware/verifyToken）、github-oauth 可选插件。
-- **不做**：用户档案与 `/me` 类端点（用户语义经 `onVerified` 还给 App，库不知道 users 表长什么样）、权益/订阅、跨 App 账号、UI。
+- **不做**：用户档案与 `/me` 类端点（用户语义经 `onVerified` 还给 App，库不知道 users 表长什么样）、权益/订阅、跨 App 账号、UI、**第三方 provider 凭据的存储与再分发**（OAuth token 透传给 `onVerified` 即止，1.2.0 起）。
 - 运行底座只承诺 Cloudflare Workers（D1 + KV binding 是唯一平台锁定，见 design.md 技术选型）。
 
 ## 公共 API
@@ -185,6 +185,7 @@ onVerified: async (identity: {
   provider: "email" | "github";
   providerUserId?: string;             // OAuth 时的外部身份 ID
   providerProfile?: unknown;           // OAuth provider 公开档案（GitHub = /user 裁剪到建档白名单，敏感字段库内剔除）；1.1.0 起
+  providerAccessToken?: string;        // OAuth provider 的 access token，库只透传不存储（GitHub OAuth App token 不过期）；1.2.0 起
   requestMeta: { ip?: string; userAgent?: string };
 }) => Promise<{
   userId: string;                      // 进 JWT sub 与 sessions.user_id
@@ -207,7 +208,7 @@ onVerified: async (identity: {
 2. `GET /oauth/github/callback?code&state` → 验 state → 换 access token → GitHub API 取 primary + verified email 与 user id → `onVerified({provider:"github", providerUserId, email})` → `createSession` → 生成**一次性授权码** `otc` 存 KV（60s、单次）→ 302 `{deepLink}?otc=…`；
 3. `POST /oauth/exchange` `{otc}` → 验证即焚 → 返回 `{accessToken, refreshToken, isNewUser?, user?}`（与 verify 同构）。
 
-deepLink 白名单进 `socials.github` 配置；scope、错误路径、TrendingAI 存量 `github_user_id` 映射细节在实现前补入 `protocol.md`。
+deepLink 白名单进 `socials.github` 配置；错误路径与 TrendingAI 存量 `github_user_id` 映射细节见 `protocol.md`。**scope 自 1.2.0 起可配**（`socials.github.scope`，默认 `user:email`）：TrendingAI 需 `user:email public_repo`（star 写操作），Tono 用默认值。
 
 ## 包结构、依赖与构建
 
