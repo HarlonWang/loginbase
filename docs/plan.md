@@ -204,8 +204,26 @@
 6. **iOS 白拿登录能力**：UI 在 commonMain，iOS 只差 deepLink 与浏览器桥接的 expect/actual（现为 `NoopAuthManager`、入口全隐藏）。开不开是产品决策，技术上不再是障碍。
 7. 登录页只管「登进来」，**GitHub 关联入口不在此流程**（在账户页/升级对话框，走议题 2 的 link）。
 
+### TrendingAI 接入实录（2026-08-13，进行中）
+
+**已完成**：composite build 接通（`local.properties` 配 `loginbase-kt.dir`）；`LoginbaseAuthManager` 实现既有 `AuthManager` 接口 → 6 个登录入口零改动；`LoginSheetHost` 取代方式选择器（邮箱两屏原生 + GitHub 按钮同屏）；token 取回切到自家端点（`LogtoAccountApi` → `GithubTokenApi`，响应形状对齐故 4 个 provider 与 `RepoStarService` 一行未改）；deepLink 全链路。
+
+**生产端到端验证通过**：邮箱验证码登录（zh 模板、命中原账号）、GitHub 登录（Pro 权益打通、GitHub profile 数据正常、`gh_token_enc` 非空）。
+
+**真机才暴露的四个问题**（都不是编译期或单测能发现的）：
+
+| # | 问题 | 教训 |
+|---|---|---|
+| 1 | 后端 `loginbase` 锁在 1.1.0，1.2.0 的三个能力（scope 可配 / `providerAccessToken` / `onLinked`）**全部静默失效**，整套 token 保管形同虚设 | 冒烟断言（"邮箱用户取 token 得 404"）与故障表现重合 → **等于没验证**。能区分的断言是"GitHub 登录后 `gh_token_enc` 非空" |
+| 2 | 客户端 `scope` 漏配，线上仍是 `user:email` | 议题定案写了但接入时漏了；靠顺手看 302 URL 才发现 |
+| 3 | 关掉浏览器无回调 → 面板永远转圈 | **plan.md 与代码注释都写了「由 onResume 复位（见下）」，而那个实现根本不存在**——注释承诺大于代码，比漏写更能骗过 review |
+| 4 | `MainActivity` 默认 standard launchMode → 回跳新建实例，表现为"跳回首页"，otc 无人消费 | Logto 时代这条由 SDK 的 manifest 注入，自建后没人提醒 |
+
+**待办**：绑定入口改走 link 流程（`AccountLink` 去 Logto 化）；**业务请求 401 → 刷新 → 重试**（当前缺失，access token 过期后账户页直接显示加载失败）；C 方案升级过渡 UX；发版。
+
 ### 待讨论（挂起，动 TrendingAI 前需对齐）
 
+- **Android App Links**（2026-08-13 记）：当前 OAuth 回跳用 custom scheme（`cn.trendingai://`），Android 对它**无所有权验证**——恶意 App 可抢注同名 scheme 劫持 `otc`（60s 内可换整对令牌）。Logto 时代同样如此（其控制台里 release/debug 两条 URI 一直都在），非本次引入。根治手段是 App Links（`https://` + `assetlinks.json` 签名校验），代价是要处理 debug 签名指纹与域名验证，属独立一块工作。RFC 8252 的偏好顺序也是 claimed HTTPS URI > private-use scheme。
 - **单飞 refresh**（2026-08-13 挂起）：实现已随 loginbase-kt PR #2 落地（互斥锁 + 进锁后重读复用，8 并发收敛为 1 次请求，反向验证过），但**本人要求列为待讨论点**，后续再一起过。涉及面：它是服务端救活护栏（1h/3 次）的客户端前提，两端是一套机制的两半（见 server-design.md 场景矩阵与 design.md 会话模型）；若讨论后改变客户端策略，服务端护栏参数可能要跟着重估。
 
 #### 邮件 locale（2026-08-13 挂起，方案已成型，待主流程结束后单独对齐再实施）
