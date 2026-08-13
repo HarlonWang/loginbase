@@ -108,8 +108,8 @@
 
 | 时点 | 动作 | 性质 |
 |---|---|---|
-| ① 部署前（现在） | Management API 全量导出 → 回填 ~146 行 → 对账报告（导出数/写入数/冲突数 + 边界量化：同 email 多账号、Logto 侧本身无 email 的用户数——后者用 GitHub 登录永远安全，仅改邮箱登录会建新号，预期个位数） | 一次性 |
-| ② 观察期 | 哨兵 SQL（例行看一眼）：`SELECT COUNT(*) FROM app_users WHERE logto_sub IS NOT NULL AND email IS NULL`——回填后**只应下降**（重登/升级自然填补）；上升 = 上表某个「无洞」假设被证伪，回来修 | 烟雾报警器，零成本 |
+| ① 部署前 | ✅ 2026-08-13 已执行。对账结果：app_users 232 行（全有 logto_sub）× Logto 254 用户（22 个注册过未建档）；null-email 143 行中 **49 行有 Logto primaryEmail，全部回填成功**；冲突/重复/覆盖均为 0。**边界修正**：Logto 侧无 email 的达 94 行（远超「个位数」预期——GitHub 邮箱私有时 Logto 拿不到，rawData 亦空），其邮箱**在任何系统都不存在**、非回填可解；自愈机制：这批人升级后用 GitHub 登录时 loginbase 取 verified email 经 COALESCE 补上，此后邮箱登录亦可命中。M2M 凭证（密钥名 loginbase-migration，365 天）保留在 Logto 侧供③终扫 | 一次性，已完成 |
+| ② 观察期 | 哨兵 SQL（例行看一眼）：`SELECT COUNT(*) FROM app_users WHERE logto_sub IS NOT NULL AND email IS NULL`——回填后**只应下降**（重登/升级自然填补）；上升 = 上表某个「无洞」假设被证伪，回来修。**基线：94（2026-08-13 回填后）** | 烟雾报警器，零成本 |
 | ③ 阶段 4 退役前 | 最后一次导出 + 终态回填残余（预期为从未活动的沉睡账号）——**租户注销后 Logto 数据永久消失，此为最后机会**，退役 checklist 硬项 | 一次性 |
 
 一句话：**快照修旧 + 代码防新自动维持完整性，哨兵证明维持真的在发生，终扫在数据源销毁前最后兜底。**
