@@ -14,6 +14,18 @@ export interface VerifiedIdentity {
    * 认证视图的敏感字段（私有统计、2FA 状态等）在库边界内剔除。
    */
   providerProfile?: unknown;
+  /**
+   * OAuth provider 的 access token（1.2.0 起）。库**只透传、不存储、不再分发**——
+   * 第三方 API 凭据是各 App 的产品决策，不属登录底座（见 docs/design.md 定位边界）。
+   * GitHub OAuth App 的 token 不过期，用户撤销授权才失效。email provider 恒缺省。
+   */
+  providerAccessToken?: string;
+  /**
+   * provider 返回的全部**已验证**邮箱，归一化小写（1.2.0 起）。`email` 是其中
+   * 选定的主锚点（primary+verified 优先）；App 可用整个列表做账号对账——GitHub 上
+   * 挂了多个验证邮箱、其中之一才是 App 账号邮箱的用户，只比对 `email` 会被误判为新人。
+   */
+  verifiedEmails?: string[];
   requestMeta: { ip?: string; userAgent?: string };
 }
 
@@ -26,6 +38,39 @@ export interface VerifiedResult {
 export type OnVerified = (
   identity: VerifiedIdentity
 ) => Promise<VerifiedResult> | VerifiedResult;
+
+/**
+ * onLinked：**已登录用户绑定第二身份**的语义出口（1.2.0 起）。
+ * 与 onVerified 方向相反——onVerified **返回** userId（用外部身份换会话），
+ * onLinked **接收** userId（用已有会话认领外部身份）；不建会话、不发 token。
+ */
+export interface LinkedIdentity {
+  /** 当前登录用户，来自 link/start 的 Bearer 校验并存于 state；绝不接受客户端传入 */
+  userId: string;
+  provider: "github";
+  providerUserId: string;
+  /**
+   * link 时 userId 已确定，email 只是附加信息——provider 未给也**不构成失败**
+   * （与 onVerified 不同：那里 email 是账号锚点，缺了就无法找号建号）。
+   */
+  email?: string;
+  verifiedEmails?: string[];
+  providerProfile?: unknown;
+  providerAccessToken?: string;
+  requestMeta: { ip?: string; userAgent?: string };
+}
+
+/**
+ * 冲突用返回值而非抛错表达：「该外部身份已属他人」是预期业务结果，不是异常
+ * （抛错留给真异常 → `internal`）。库不裁决冲突——拒绝/换绑/重复绑定是否幂等
+ * 全由 App 决定，库只把 `reason` 映射成回跳参数。
+ * `reason` 须为 `[A-Za-z0-9_]{1,64}`，否则回落为 `internal`（回跳 URL 卫生）。
+ */
+export type LinkResult = { ok: true } | { ok: false; reason: string };
+
+export type OnLinked = (
+  identity: LinkedIdentity
+) => Promise<LinkResult> | LinkResult;
 
 // onEvent：结构化事件出口（refresh 的 rescued / reuse_revoked / guardrail_revoked 等），
 // 默认实现为单行 JSON console.log（配合 Workers Logs）。字段永不含 token/code 明文。
@@ -41,6 +86,12 @@ export interface GithubSocialConfig {
   allowedRedirects: string[];
   /** GitHub OAuth App 注册的回调地址；缺省由请求 origin + basePath 推导 */
   callbackUrl?: string;
+  /**
+   * authorize 的 scope，默认 `user:email`——取 primary+verified 邮箱的最小集。
+   * 需要额外能力的消费方自配，如 TrendingAI 的 `"user:email public_repo"`
+   * （star 写操作要求 public_repo）。scope 越大授权页越吓人，按需给。
+   */
+  scope?: string;
 }
 
 export interface LoginConfig {
@@ -57,6 +108,8 @@ export interface LoginConfig {
     refreshTtlMs?: number | null;
   };
   onVerified: OnVerified;
+  /** 提供后才启用 link 端点（未提供 → 404 not_configured，默认关闭、显式启用） */
+  onLinked?: OnLinked;
   onEvent?: OnEvent;
   socials?: { github?: GithubSocialConfig };
 }

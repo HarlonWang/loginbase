@@ -2,7 +2,7 @@
 
 > **本文件是 API 契约的唯一权威**，只住服务端仓——客户端仓 `HarlonWang/loginbase-kt` 只链接、不留副本。协议变更必须与服务端实现同 commit，并在客户端仓开跟进 issue、客户端版本落地前不关（2026-08-13 分仓后的纪律，见 CLAUDE.md 铁律与 design.md）。
 >
-> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.0.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
+> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.2.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
 >
 > 结构与决策背景见 [server-design.md](server-design.md)；本文只记 wire 层事实。
 
@@ -95,16 +95,34 @@ Bearer 鉴权。吊销该用户全部会话。成功 `204`；无/坏 token `401`
 |---|---|---|
 | redirect 缺失或不在白名单 | 400 | `{ "error": "invalid_redirect" }` |
 
+### POST /oauth/github/link/start（1.2.0 起）
+
+**已登录用户绑定第二身份**。Bearer 鉴权；请求 `{ "redirect": string }`。
+
+| 结果 | 状态码 | 响应 |
+|---|---|---|
+| 成功 | 200 | `{ "authorizeUrl": string }` |
+| 无/坏 token | 401 | `{ "error": "Unauthorized" }` / `{ "error": "Invalid token" }` |
+| redirect 缺失或不在白名单 | 400 | `{ "error": "invalid_redirect" }` |
+| 未配置 `socials.github` 或未提供 `onLinked` | 404 | `{ "error": "not_configured" }` |
+
+**为什么是 POST 而非 302**：浏览器导航带不了 `Authorization` 头，故不能像 login 的 `start` 那样直接跳转——客户端先换取 `authorizeUrl`，再自行用系统浏览器打开。服务端把当前 `userId` 写进 `state` 的 KV 载荷（客户端不可见、不可传入）。
+
 ### GET /oauth/github/callback?code={code}&state={state}
 
-GitHub 回调。验证并焚毁 `state` → server-side 换 token（`client_secret` 参与，客户端不可见）→ 取 GitHub 用户身份与 primary + verified 邮箱 → `onVerified({provider:"github", providerUserId, email})` → 建会话 → 生成 `otc`（32B random，KV 存 60s、单次使用）→ `302 {redirect}?otc={otc}`。
+GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注册在 GitHub 侧，多一个即多一处配置漂移）。验证并焚毁 `state` → server-side 换 token（`client_secret` 参与，客户端不可见）→ 取 GitHub 用户身份与已验证邮箱 → 按 `state` 载荷的 `mode` 分流：
+
+**login 分支**（`mode` 缺省）：`onVerified({provider:"github", providerUserId, email, verifiedEmails, providerProfile, providerAccessToken})` → 建会话 → 生成 `otc`（32B random，KV 存 60s、单次使用）→ `302 {redirect}?otc={otc}`。
+
+**link 分支**（`mode === "link"`，1.2.0 起）：`onLinked({userId, ...同上})` → **不建会话、不发 token**（用户本来就登录着，故也不需要 otc 中转）→ `302 {redirect}?linked=github`。
 
 | 失败 | 行为 |
 |---|---|
 | state 缺失/无效/已使用 | `400 { "error": "invalid_state" }`（redirect 未知，无法回跳） |
-| GitHub 换码失败 | `302 {redirect}?error=oauth_failed` |
-| 无 primary + verified 邮箱 | `302 {redirect}?error=oauth_no_email` |
-| onVerified 失败 | `302 {redirect}?error=internal` |
+| GitHub 换码或取用户失败 | `302 {redirect}?error=oauth_failed` |
+| 无 verified 邮箱 | login：`302 {redirect}?error=oauth_no_email`；**link 分支不失败**——userId 已定，email 只是附加信息 |
+| onVerified / onLinked 抛错 | `302 {redirect}?error=internal` |
+| onLinked 返回 `{ok:false, reason}` | `302 {redirect}?error={reason}`（App 自定，典型 `already_linked`）；`reason` 不匹配 `[A-Za-z0-9_]{1,64}` 时回落 `internal` |
 
 ### POST /oauth/exchange
 
@@ -126,10 +144,11 @@ GitHub 回调。验证并焚毁 `state` → server-side 换 token（`client_secr
 | `code_expired` / `invalid_code` | code/verify | 400 |
 | `too_many_attempts` | code/verify | 429 |
 | `invalid_refresh_token` (+`reason`) | refresh | 401 |
-| `invalid_redirect` | oauth/github/start | 400 |
+| `invalid_redirect` | oauth/github/start、oauth/github/link/start | 400 |
 | `invalid_state` | oauth/github/callback | 400 |
 | `invalid_otc` | oauth/exchange | 400 |
-| `not_configured` | oauth/*（插件未配置） | 404 |
+| `not_configured` | oauth/*（插件未配置；link 端点还需 `onLinked` 已提供） | 404 |
+| `already_linked` 等 | oauth/github/callback 的 link 分支回跳（**App 自定**，非库内枚举） | 302 |
 | `internal` | code/send、code/verify、oauth | 500 |
 | `Unauthorized` / `Invalid token` | Bearer 鉴权端点 | 401 |
 
@@ -144,5 +163,7 @@ GitHub 回调。验证并焚毁 `state` → server-side 换 token（`client_secr
 | `oauth:otc:{otc}` | 60s | 一次性授权码载荷（单次） |
 
 ## 版本历史
+
+- **1.2.0**（2026-08）：新增 `POST /oauth/github/link/start` 与 callback 的 **link 分支**（已登录用户绑定第二身份，`onLinked` 钩子，不建会话不发 token）；GitHub authorize 的 `scope` 改为服务端可配（默认 `user:email`）；`onVerified`/`onLinked` 的 identity 新增 `providerAccessToken`（库只透传不存储）与 `verifiedEmails`（全部已验证邮箱，归一化小写）。**向后兼容**：1.1.0 期间写入的 state 载荷无 `mode`，新代码按 login 分支处理，滚动升级期在飞的授权不受影响。
 
 - **1.0.0**（2026-08）：初版定稿。邮箱验证码 + 会话管理端点承接 Tono-Server 生产实现（wire 不变）；新增 `user`/`isNewUser` 归属说明（onVerified 透传）、github-oauth 三端点、`session_expired` 语义（refreshTtlMs 可配后生效）。

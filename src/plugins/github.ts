@@ -3,7 +3,8 @@
 // 客户端再以 POST /oauth/exchange 兑换 token 对。
 import type { Hono } from "hono";
 import type { LoginConfig, GithubSocialConfig } from "../config.js";
-import type { AuthVariables } from "../middleware.js";
+import { trimmedField } from "../body.js";
+import { createAuthMiddleware, type AuthVariables } from "../middleware.js";
 import { generateRefreshToken as randomToken } from "../session.js";
 import { createSession } from "../session.js";
 import { signAccessToken, ACCESS_TTL_SECONDS } from "../token.js";
@@ -15,9 +16,20 @@ const GITHUB_API_EMAILS = "https://api.github.com/user/emails";
 
 const STATE_TTL_SECONDS = 600;
 const OTC_TTL_SECONDS = 60;
+const DEFAULT_SCOPE = "user:email";
+
+// App 自定义的冲突 reason 会进回跳 URL，限制字符集防畸形/敏感内容外泄
+const REASON_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
 
 interface StateRecord {
   redirect: string;
+  /**
+   * "link" = 已登录用户绑定第二身份；缺省 = 登录/注册。
+   * 显式字段而非靠 userId 是否存在推断——将来加别的流程不用改判定。
+   */
+  mode?: "link";
+  /** mode==="link" 时的当前用户（来自 link/start 的 Bearer 校验） */
+  userId?: string;
 }
 
 interface OtcPayload {
@@ -81,6 +93,85 @@ function publicProfile(user: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+function buildAuthorizeUrl(
+  gh: GithubSocialConfig,
+  callbackUrl: string,
+  state: string
+): string {
+  const url = new URL(GITHUB_AUTHORIZE);
+  url.searchParams.set("client_id", gh.clientId);
+  url.searchParams.set("redirect_uri", callbackUrl);
+  url.searchParams.set("scope", gh.scope ?? DEFAULT_SCOPE);
+  url.searchParams.set("state", state);
+  return url.toString();
+}
+
+interface GithubIdentity {
+  ghUser: { id: number } & Record<string, unknown>;
+  ghToken: string;
+  /** primary+verified 优先，退而求其次任一 verified；一个都没有则缺省 */
+  email?: string;
+  /** 全部 verified 邮箱，归一化小写 */
+  verifiedEmails: string[];
+}
+
+/**
+ * 换 token → 取用户 → 取邮箱。login 与 link 两条流程共用（callback 是同一个端点：
+ * GitHub OAuth App 的回调地址注册在 GitHub 侧，多一个即多一处配置漂移）。
+ * 返回 null = 换码或取用户失败，调用方回跳 oauth_failed。
+ */
+async function fetchGithubIdentity(
+  gh: GithubSocialConfig,
+  code: string
+): Promise<GithubIdentity | null> {
+  // server-side 换 token：client_secret 只在此出现，客户端不可见
+  const tokenRes = await fetch(GITHUB_TOKEN, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      client_id: gh.clientId,
+      client_secret: gh.clientSecret,
+      code,
+    }),
+  });
+  const tokenBody = tokenRes.ok
+    ? ((await tokenRes.json().catch(() => null)) as { access_token?: string } | null)
+    : null;
+  const ghToken = tokenBody?.access_token;
+  if (!ghToken) return null;
+
+  // GitHub API 要求 User-Agent
+  const ghHeaders = {
+    Authorization: `Bearer ${ghToken}`,
+    Accept: "application/vnd.github+json",
+    "User-Agent": "loginbase",
+  };
+  const userRes = await fetch(GITHUB_API_USER, { headers: ghHeaders });
+  if (!userRes.ok) return null;
+  const ghUser = (await userRes.json()) as { id: number } & Record<string, unknown>;
+
+  const emailsRes = await fetch(GITHUB_API_EMAILS, { headers: ghHeaders });
+  const emails = emailsRes.ok
+    ? ((await emailsRes.json()) as Array<{
+        email: string;
+        primary: boolean;
+        verified: boolean;
+      }>)
+    : [];
+  const normalize = (e: string) => e.trim().toLowerCase();
+  const verifiedEmails = emails.filter((e) => e.verified).map((e) => normalize(e.email));
+  const email =
+    emails.find((e) => e.primary && e.verified)?.email ??
+    emails.find((e) => e.verified)?.email;
+
+  return {
+    ghUser,
+    ghToken,
+    ...(email ? { email: normalize(email) } : {}),
+    verifiedEmails,
+  };
+}
+
 export function registerGithubOauth<TEnv>(
   auth: Hono<{ Variables: AuthVariables }>,
   getConfig: (env: TEnv) => LoginConfig,
@@ -88,6 +179,10 @@ export function registerGithubOauth<TEnv>(
 ) {
   const cfg = (c: { env: unknown }) => getConfig(c.env as TEnv);
   const github = (c: { env: unknown }) => cfg(c).socials?.github;
+  const authMiddleware = createAuthMiddleware(getConfig);
+  const callbackUrlFor = (c: { env: unknown; req: { url: string } }, gh: GithubSocialConfig) =>
+    gh.callbackUrl ??
+    `${new URL(c.req.url).origin}${basePath}/oauth/github/callback`;
 
   auth.get("/oauth/github/start", async (c) => {
     const gh = github(c);
@@ -104,15 +199,34 @@ export function registerGithubOauth<TEnv>(
       expirationTtl: STATE_TTL_SECONDS,
     });
 
-    const callbackUrl =
-      gh.callbackUrl ??
-      `${new URL(c.req.url).origin}${basePath}/oauth/github/callback`;
-    const url = new URL(GITHUB_AUTHORIZE);
-    url.searchParams.set("client_id", gh.clientId);
-    url.searchParams.set("redirect_uri", callbackUrl);
-    url.searchParams.set("scope", "user:email");
-    url.searchParams.set("state", state);
-    return c.redirect(url.toString(), 302);
+    return c.redirect(buildAuthorizeUrl(gh, callbackUrlFor(c, gh), state), 302);
+  });
+
+  // 已登录用户绑定第二身份。**必须是 POST**：浏览器导航带不了 Authorization 头，
+  // 故不能像 login 那样 GET 直接 302——客户端先换 authorizeUrl，再自己打开浏览器。
+  auth.post("/oauth/github/link/start", authMiddleware, async (c) => {
+    const gh = github(c);
+    // onLinked 未提供 = 该能力未启用（默认关闭、显式启用）
+    if (!gh || !cfg(c).onLinked) return c.json({ error: "not_configured" }, 404);
+
+    const body = await c.req
+      .json<{ redirect?: string }>()
+      .catch(() => ({}) as { redirect?: string });
+    const redirect = trimmedField(body.redirect);
+    if (!redirect || !redirectAllowed(redirect, gh)) {
+      return c.json({ error: "invalid_redirect" }, 400);
+    }
+
+    const state = randomToken();
+    const record: StateRecord = { redirect, mode: "link", userId: c.get("userId") };
+    await cfg(c).kv.put(`oauth:state:${state}`, JSON.stringify(record), {
+      expirationTtl: STATE_TTL_SECONDS,
+    });
+
+    return c.json(
+      { authorizeUrl: buildAuthorizeUrl(gh, callbackUrlFor(c, gh), state) },
+      200
+    );
   });
 
   auth.get("/oauth/github/callback", async (c) => {
@@ -128,59 +242,50 @@ export function registerGithubOauth<TEnv>(
       return c.json({ error: "invalid_state" }, 400);
     }
     await cfg(c).kv.delete(stateKey); // 单次使用，验证即焚
-    const { redirect } = JSON.parse(rawState) as StateRecord;
+    const { redirect, mode, userId } = JSON.parse(rawState) as StateRecord;
 
-    // server-side 换 token：client_secret 只在此出现，客户端不可见
-    const tokenRes = await fetch(GITHUB_TOKEN, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        client_id: gh.clientId,
-        client_secret: gh.clientSecret,
-        code,
-      }),
-    });
-    const tokenBody = tokenRes.ok
-      ? ((await tokenRes.json().catch(() => null)) as { access_token?: string } | null)
-      : null;
-    const ghToken = tokenBody?.access_token;
-    if (!ghToken) return c.redirect(withParam(redirect, "error", "oauth_failed"), 302);
-
-    // GitHub API 要求 User-Agent
-    const ghHeaders = {
-      Authorization: `Bearer ${ghToken}`,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "loginbase",
-    };
-    const userRes = await fetch(GITHUB_API_USER, { headers: ghHeaders });
-    if (!userRes.ok) return c.redirect(withParam(redirect, "error", "oauth_failed"), 302);
-    const ghUser = (await userRes.json()) as { id: number } & Record<string, unknown>;
-
-    const emailsRes = await fetch(GITHUB_API_EMAILS, { headers: ghHeaders });
-    const emails = emailsRes.ok
-      ? ((await emailsRes.json()) as Array<{
-          email: string;
-          primary: boolean;
-          verified: boolean;
-        }>)
-      : [];
-    const email =
-      emails.find((e) => e.primary && e.verified)?.email ??
-      emails.find((e) => e.verified)?.email;
-    if (!email) return c.redirect(withParam(redirect, "error", "oauth_no_email"), 302);
+    const identity = await fetchGithubIdentity(gh, code);
+    if (!identity) return c.redirect(withParam(redirect, "error", "oauth_failed"), 302);
+    const { ghUser, ghToken, email, verifiedEmails } = identity;
 
     const userAgent = c.req.header("User-Agent") ?? undefined;
     const ip = c.req.header("CF-Connecting-IP") ?? undefined;
+    const common = {
+      provider: "github" as const,
+      providerUserId: String(ghUser.id),
+      providerProfile: publicProfile(ghUser), // GitHub /user 公开档案白名单字段
+      providerAccessToken: ghToken,
+      verifiedEmails,
+      requestMeta: { ip, userAgent },
+    };
+
+    // ---- link 分支：认领身份，不建会话、不发 token ----
+    if (mode === "link") {
+      const onLinked = cfg(c).onLinked;
+      // userId 由 link/start 写入，缺失只可能是载荷被篡改/降级，保守失败
+      if (!onLinked || !userId) {
+        return c.redirect(withParam(redirect, "error", "internal"), 302);
+      }
+      let result;
+      try {
+        // email 在此可缺省：userId 已定，邮箱只是附加信息（与 login 分支的关键差别）
+        result = await onLinked({ userId, ...common, ...(email ? { email } : {}) });
+      } catch {
+        return c.redirect(withParam(redirect, "error", "internal"), 302);
+      }
+      if (!result.ok) {
+        const reason = REASON_PATTERN.test(result.reason) ? result.reason : "internal";
+        return c.redirect(withParam(redirect, "error", reason), 302);
+      }
+      return c.redirect(withParam(redirect, "linked", "github"), 302);
+    }
+
+    // ---- login 分支：email 是账号锚点，缺了就无法找号建号 ----
+    if (!email) return c.redirect(withParam(redirect, "error", "oauth_no_email"), 302);
 
     let verified;
     try {
-      verified = await cfg(c).onVerified({
-        email: email.trim().toLowerCase(),
-        provider: "github",
-        providerUserId: String(ghUser.id),
-        providerProfile: publicProfile(ghUser), // GitHub /user 公开档案白名单字段
-        requestMeta: { ip, userAgent },
-      });
+      verified = await cfg(c).onVerified({ email, ...common });
     } catch {
       return c.redirect(withParam(redirect, "error", "internal"), 302);
     }
@@ -220,7 +325,7 @@ export function registerGithubOauth<TEnv>(
     const body = await c.req
       .json<{ otc?: string }>()
       .catch(() => ({} as { otc?: string }));
-    const otc = (body.otc ?? "").trim();
+    const otc = trimmedField(body.otc);
     const key = `oauth:otc:${otc}`;
     const raw = otc ? await cfg(c).kv.get(key) : null;
     if (!raw) return c.json({ error: "invalid_otc" }, 400);

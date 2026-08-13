@@ -36,6 +36,9 @@ export type {
   VerifiedIdentity,
   VerifiedResult,
   OnVerified,
+  LinkedIdentity,
+  LinkResult,
+  OnLinked,
   OnEvent,
   GithubSocialConfig,
 } from "./config.js";

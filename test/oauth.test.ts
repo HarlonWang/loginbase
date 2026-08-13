@@ -305,6 +305,10 @@ describe("onVerified 契约（github provider）", () => {
       providerUserId: "98765",
       // 白名单裁剪：two_factor_authentication / total_private_repos 等敏感字段不出库边界
       providerProfile: { id: 98765, login: "octocat", avatar_url: "https://a.png" },
+      // 1.2.0 起：token 透传给 App 自行决定存不存（库不存不再分发）；
+      // verified 邮箱给全量（归一化小写），App 可用整个列表对账降低账号分裂
+      providerAccessToken: "gh-token",
+      verifiedEmails: ["octo@example.com", "alt@example.com"],
       requestMeta: { ip: "8.8.8.8", userAgent: "oauth-ua" },
     });
   });
