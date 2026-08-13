@@ -127,7 +127,7 @@
 
 > **2026-08-13 定：客户端走独立仓 `HarlonWang/loginbase-kt`**（原计划的 `kotlin/` 子目录取消，理由见 design.md「两个仓库」节）。`protocol.md` 仍只住服务端仓，客户端仓不留副本；两仓独立版本线，tag 各为裸版本号，客户端从 `0.1.0` 起步。
 
-0. **服务端补齐**（`loginbase@1.2.0`，客户端动工前完成，见下方「GitHub token 取回」小节）：`socials.github.scope` 可配 + `onVerified` 的 identity 带 `providerAccessToken`；
+0. **服务端补齐**（`loginbase@1.2.0`，客户端动工前完成，见下方两个议题小节）：`socials.github.scope` 可配、`onVerified` 的 identity 带 `providerAccessToken`（+ 可选 `verifiedEmails`）、**link 流程**（`link/start` + callback 分流 + `onLinked` 钩子）；protocol.md 与实现同 commit；
 1. 新建 `HarlonWang/loginbase-kt` 仓 + gradle 工程骨架（照抄 kmp-webview：vanniktech 插件、android + iosArm64 + iosSimulatorArm64、坐标 `wang.harlon:loginbase-kt`）+ 其自有 build/publish workflow（publish 照抄本仓 `publish.yml`，runner 换 macos）——可与第 3 步并行；
 2. 核心实现：`AuthClient`（send/verify/refresh/signOut 的 Ktor 封装）、`TokenStore` 接口 + multiplatform-settings 默认实现、`AuthState` flow、**单飞 refresh**（护栏预算的客户端前提，见 server-design.md 场景矩阵）；
 3. LogtoAuthManager 竞态经验逐条固化核对：token 获取互斥串行化、丢回执重试（与救活配合）、时钟偏差归因、invalid_refresh_token 判定与登出策略；
@@ -157,7 +157,48 @@
 
 **硬约束（验收项）**：① D1 不得明文存 token——`public_repo` token 泄露等于能改用户所有公开仓库；② 上线前 scope 必须配平，否则新版用户 star 全挂（现生产 loginbase 侧 scope 仍是 `user:email`，因新版未发故当前无害）。
 
-**后补优化（不阻塞第 4 步）**：增量授权（登录只要 `user:email`，首次 star 时再补 `public_repo`）与 GitHub 撤销授权后的重新授权路径，都落在议题 2 的 link 流程上，待其就绪后再评估。
+**后补优化（不阻塞第 4 步）**：增量授权（登录只要 `user:email`，首次 star 时再补 `public_repo`）与 GitHub 撤销授权后的重新授权路径，都可复用议题 2 的 link 流程，待新版上线后再按数据评估。
+
+### 已登录用户绑定第二身份（议题 2，2026-08-13 定案）
+
+**要解决的问题（问题 A）**：Pro 权益的发放键是 GitHub 数字 ID（`pro_entitlements.github_user_id`），账号的身份键是 `app_users.user_id`；纯邮箱注册的账号 `github_user_id` 为 NULL，与任何权益记录都匹配不上——**赞助了也拿不到 Pro**。这不是假想：`SponsorLinkHost` 的注释记着 2026-07-29 首位赞助者付完钱被当免费用户拦 48 分钟，那整个组件就是为它建的补偿设施。让两者对上的唯一办法是把 GitHub 身份写进**他当前这个账号**，而这个动作目前**只有 Logto 能做**（关联页 `{endpoint}/account/social/{connectorId}`，见 `Constants.kt`；入口在 ProfileScreen 与 SponsorLinkHost 两处，回程靠 MainActivity 的 ON_RESUME 窗口对账）。**loginbase 完全没有这个语义**——它的 OAuth callback 只回答「这是谁在登录」，一律走 `onVerified` 找号/建号。
+
+**不属于本议题的（问题 B）**：「GitHub 邮箱 ≠ 账号邮箱 → 用 GitHub 登录会建出第二个账号」的分裂风险，**Logto 时代同样存在**（2026-08-13 查证：Logto 的「自动关联具有相同标识符的账户」也是按 email 匹配，不等则建新用户 → 新 `logto_sub` → `app_users` 新行）。两边行为一致，loginbase 未引入新风险；反而因为要了 `user:email`、拿得到 verified 邮箱，消除了 Logto 时代「拿不到邮箱 → 托管页要用户手填 → 填错即分裂」这个额外的不确定环节。**故 B 是长期产品缺陷、不是回归，不由第 4 步背**；可选改善见下方。
+
+| | Logto 时代 | loginbase |
+|---|---|---|
+| GitHub 邮箱 == 账号邮箱 | 自动关联 → 同一账号 | 静默按 email 收敛 → 同一账号 |
+| GitHub 邮箱 ≠ 账号邮箱 | 建新用户 → **分裂** | 建新行 → **分裂**（行为一致） |
+| 拿不到 GitHub 邮箱 | 托管页要求手填，填错即分裂 | 不会发生 |
+| **已登录状态主动补挂** | ✅ 关联页 | ❌ **无此能力 ← 唯一的真回归** |
+
+**定案：给库加「已登录用户绑定第二身份」的通用语义**，形态见 server-design.md 的 `onLinked` 与 link 分支。边界：
+
+| 范围 | 决定 |
+|---|---|
+| 绑定动作的协议与流程（provider 无关，落在各 social 插件） | ✅ 做，1.2.0 |
+| `onLinked` 钩子 + 冲突回跳 | ✅ 做 |
+| unlink（解绑） | ❌ 不做——TrendingAI 也没有解绑入口 |
+| 「列出我已绑定的身份」端点 | ❌ 不做——已绑什么是 App 的档案数据（`app_users.github_user_id`），属既定「不解决」边界 |
+| 换绑裁决 | 库不管；TrendingAI 的 `onLinked` **拒绝换绑**（返回 `already_linked`）——换绑会让 Pro 权益随 GitHub ID 漂移，风险不对称 |
+
+**业界对照**（2026-08-13 查证，形态属主流的模式 A）：Supabase `linkIdentity()`（要求已登录、候选身份已属他人则失败、Manual Linking 默认关闭需显式开启）、Keycloak Client Initiated Account Linking（把 nonce + user session id + client id + idp alias 哈希进发起链接）、Firebase `linkWithRedirect` 均同此形；我们的 state 由服务端生成并 KV 单次即焚，天然免疫伪造，比 Keycloak 的 HMAC 更简单。排除模式 B（Auth0 `link_with`：两次独立登录 + 服务端合并）——它要求第二身份能独立登录签发 token，而我们的 `onVerified` 在那一步就会建号，且我们不做用户合并。与这些产品的唯一实质差异：它们自带 identities 表，loginbase 不存身份档案、绑定结果经 `onLinked` 落在 App 的 `app_users`。
+
+**客户端收益**：Logto 关联页是 web 单任务流程、**回跳不了 App**，所以现在要靠「用户手动返回 → ON_RESUME → 30 分钟窗口刷新身份 → markLinked 通知界面」补偿。我们的 callback 直接 302 回 deepLink——`REFRESH_WINDOW` / `shouldRefreshIdentity` / `AccountLinkOpenedAt` 偏好键 / MainActivity 的 ON_RESUME 分支**整块删除**，净减代码。
+
+**问题 B 的可选改善（零成本，建议随 1.2.0 顺带）**：loginbase 已经拉了完整的 `/user/emails` 列表却只挑一个用（`github.ts`），把**全部 verified emails** 一并透传给 `onVerified`，App 侧即可用整个列表去匹配 `app_users.email`——零额外 API 请求，让「GitHub 上挂了多个验证邮箱、其中之一正是账号邮箱」的用户不再被误判为新人。它压缩分裂人群，但不消除（邮箱完全不重合者仍需走 link）。
+
+### 登录 UI 形态（第 4 步 TrendingAI 侧，2026-08-13 定）
+
+**变化的本质**：现在两条登录路都在 App 外（GitHub 走 Custom Tabs directSignIn，邮箱走 Logto 托管页），底部选择器正是被「App 内无处承载选择」倒逼出来的。新版变成**一内一外**——邮箱全程原生（`/code/send` → 原生验证码屏 → `/code/verify`），GitHub 仍需外部授权页（`start` → GitHub → deepLink 带 `otc` → `exchange`）。托管页那 ~490KB SPA、大陆 ~1s 的加载（76% 取消率的主要嫌疑）**归零**，这正是本项目最初的动机兑现。
+
+1. **去掉方式选择器**，改为一个登录页（沿用 `TrendingBottomSheet`，比全屏页打断感低——多数入口是 star Snackbar 这类轻量触发）：邮箱输入 + 发送验证码，分隔线下「使用 GitHub 继续」；发送成功后**同一容器内切屏**到 6 格验证码（填满自动提交、支持整段粘贴、可返回改邮箱）。6 个登录入口与 `source` 埋点归因一行不改；代价是 `sign_in_method_shown/dismiss` 两个埋点退休。
+2. **重发冷却用服务端返回的 `cooldownSeconds`**（60）倒计时，不写死。
+3. **错误码 → 文案**：`invalid_email`（本地先校验，服务端兜底）/ `too_many_requests` + `retryAfterSeconds` →「请 N 秒后再试」/ `invalid_code` →「验证码不正确」**（协议不返回剩余尝试次数，文案不得写「还可再试 N 次」）** / `code_expired` →「已失效，请重新发送」/ `too_many_attempts` →「错误次数过多，请重新发送」/ `internal` → 通用失败重试。
+4. **浏览器被用户关掉没有回调**（Android Custom Tabs 不像 Logto SDK 会回 `USER_CANCELED`）→ 必须在 `onResume` 复位 loading 态，否则 sheet 永远转圈；iOS `ASWebAuthenticationSession` 有取消回调，两端行为不一致需各自处理。
+5. **埋点**：`sign_in_start/success/canceled/error` 保留（`method` 语义随选择器去除而调整）；**`auth_probe` 退休**——自有域 api.trendingai.cn 不再有 Logto 海外边缘那个「可达性失败伪装成用户取消」的观测盲区。
+6. **iOS 白拿登录能力**：UI 在 commonMain，iOS 只差 deepLink 与浏览器桥接的 expect/actual（现为 `NoopAuthManager`、入口全隐藏）。开不开是产品决策，技术上不再是障碍。
+7. 登录页只管「登进来」，**GitHub 关联入口不在此流程**（在账户页/升级对话框，走议题 2 的 link）。
 
 ### 升级过渡 UX（C 方案，2026-08-12 定）
 

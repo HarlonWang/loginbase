@@ -198,6 +198,24 @@ onVerified: async (identity: {
 - 钩子抛错 → `500 internal`，验证码已焚（用户重新发码）；不做补偿事务，保持简单，记录为已知行为。
 - 会话在钩子成功返回**之后**创建——钩子失败不留孤儿 session。
 
+**`onLinked`**（1.2.0 计划，见 plan.md 第 4 步议题 2）——**已登录用户绑定第二身份**的语义出口。与 `onVerified` 的方向相反：`onVerified` **返回** userId（用外部身份换会话），`onLinked` **接收** userId（用已有会话认领外部身份）。
+
+```ts
+onLinked?: (identity: {
+  userId: string;                      // 来自 state 载荷，绝不接受客户端传入
+  provider: "github";
+  providerUserId: string;
+  email?: string;                      // 可选——userId 已定，email 只是附加信息
+  providerProfile?: unknown;
+  providerAccessToken?: string;
+  requestMeta: { ip?: string; userAgent?: string };
+}) => Promise<{ ok: true } | { ok: false; reason: string }>
+```
+
+- **冲突用返回值而非抛错表达**：「该外部身份已属他人」是预期业务结果，不是异常；抛错留给真异常（→ `internal`）。这是与 `onVerified` 有意的不对称。
+- 库不裁决冲突（拒绝/换绑/幂等重复绑定全由 App 决定），只把 `reason` 映射成回跳参数——与 `onVerified` 把用户语义交给 App 同构。
+- 未提供 `onLinked` → link 端点 `404 not_configured`（默认关闭、显式启用，同 Supabase 的 Manual Linking 开关）。
+
 **`onEvent`**——结构化事件出口，默认实现即母本 `logEvent`（单行 JSON console.log，配合 Workers Logs）。事件至少覆盖 refresh 三种非常规结局；字段永不含 token/code 明文。
 
 ## github-oauth 插件（第 2 步，草案）
@@ -207,6 +225,8 @@ onVerified: async (identity: {
 1. `GET /oauth/github/start?redirect={deepLink}` → 生成 `state` 存 KV（10min、单次）→ 302 GitHub authorize（server-side flow，`client_secret` 换码，GitHub OAuth App 不支持 PKCE）；
 2. `GET /oauth/github/callback?code&state` → 验 state → 换 access token → GitHub API 取 primary + verified email 与 user id → `onVerified({provider:"github", providerUserId, email})` → `createSession` → 生成**一次性授权码** `otc` 存 KV（60s、单次）→ 302 `{deepLink}?otc=…`；
 3. `POST /oauth/exchange` `{otc}` → 验证即焚 → 返回 `{accessToken, refreshToken, isNewUser?, user?}`（与 verify 同构）。
+
+**link 分支（1.2.0 计划）**：`POST /oauth/github/link/start`（Bearer）→ 校验 redirect 白名单 → state 载荷扩为 `{ redirect, mode: "link", userId }` → 返回 `200 { authorizeUrl }`（不 302——浏览器导航带不了 `Authorization` 头，故必须两步）；callback **复用同一端点**（GitHub OAuth App 的 callback URL 注册在 GitHub 侧，多一个即多一处配置漂移），按 state 载荷的 `mode` 分流：无 mode 走现有 login 路径（字节不变），`mode==="link"` → `onLinked` → 不建会话、不发 token → `302 {redirect}?linked=github` 或 `?error=already_linked`。`mode` 显式写出而非靠 `userId` 是否存在推断，便于将来加流程。
 
 deepLink 白名单进 `socials.github` 配置；错误路径与 TrendingAI 存量 `github_user_id` 映射细节见 `protocol.md`。**scope 自 1.2.0 起可配**（`socials.github.scope`，默认 `user:email`）：TrendingAI 需 `user:email public_repo`（star 写操作），Tono 用默认值。
 
