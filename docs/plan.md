@@ -125,9 +125,11 @@
 
 ## 第 4 步：KMP 客户端 + TrendingAI 登录 UI
 
+> **任务 0 执行实录（2026-08-13）**：`loginbase@1.2.0` 经 PR #6（merge commit）→ tag → CI → OIDC 发布，provenance 正常，registry 冒烟通过（真包 import + link/start 返回 401）。Sourcery 审查抓到一处真问题——`(body.x ?? "").trim()` 遇非字符串抛 TypeError，把本该 400 的坏请求变成 500；排查发现是**全库同一模式共 6 处**（含无鉴权的 `/oauth/exchange`），抽 `trimmedField` 统一修掉，正常路径零变化。测试 70 → 87，其中防御类 5 个做过反向验证（还原旧实现即转红）。**待办：按分仓纪律在 `loginbase-kt` 仓开 link 协议的跟进 issue（仓未建，与建仓一并做）。**
+
 > **2026-08-13 定：客户端走独立仓 `HarlonWang/loginbase-kt`**（原计划的 `kotlin/` 子目录取消，理由见 design.md「两个仓库」节）。`protocol.md` 仍只住服务端仓，客户端仓不留副本；两仓独立版本线，tag 各为裸版本号，客户端从 `0.1.0` 起步。
 
-0. **服务端补齐**（`loginbase@1.2.0`，客户端动工前完成，见下方两个议题小节）：`socials.github.scope` 可配、`onVerified` 的 identity 带 `providerAccessToken`（+ 可选 `verifiedEmails`）、**link 流程**（`link/start` + callback 分流 + `onLinked` 钩子）；protocol.md 与实现同 commit；
+0. ✅ **服务端补齐**（`loginbase@1.2.0` 已发布，见上方实录与下方两个议题小节）：`socials.github.scope` 可配、`onVerified` 的 identity 带 `providerAccessToken`（+ 可选 `verifiedEmails`）、**link 流程**（`link/start` + callback 分流 + `onLinked` 钩子）；protocol.md 与实现同 commit；
 1. 新建 `HarlonWang/loginbase-kt` 仓 + gradle 工程骨架（照抄 kmp-webview：vanniktech 插件、android + iosArm64 + iosSimulatorArm64、坐标 `wang.harlon:loginbase-kt`）+ 其自有 build/publish workflow（publish 照抄本仓 `publish.yml`，runner 换 macos）——可与第 3 步并行；
 2. 核心实现：`AuthClient`（send/verify/refresh/signOut 的 Ktor 封装）、`TokenStore` 接口 + multiplatform-settings 默认实现、`AuthState` flow、**单飞 refresh**（护栏预算的客户端前提，见 server-design.md 场景矩阵）；
 3. LogtoAuthManager 竞态经验逐条固化核对：token 获取互斥串行化、丢回执重试（与救活配合）、时钟偏差归因、invalid_refresh_token 判定与登出策略；
