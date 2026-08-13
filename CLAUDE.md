@@ -8,7 +8,7 @@
 |---|---|
 | `/Users/wanghl/TonoProjects/Tono-Server` | **服务端母本**：`src/auth/`（code/session/token/rate_limit/email/handler）+ `test/` 的 auth 测试，落地第 1 步从这里平移；平移后 Tono-Server 改为依赖本包 |
 | `/Users/wanghl/TrendingProjects/github-ai-trending-api` | 消费方（第 3 步）：裸 JS Worker，`/auth` 前缀挂载 `auth.fetch`；现有 Logto 校验在 `src/lib/logto-auth.js`，迁移走 requireAuth 双轨 |
-| `HarlonWang/loginbase-kt`（第 4 步新建） | **姊妹仓**：KMP 客户端库，独立版本线与 CI；协议以本仓 `docs/protocol.md` 为唯一权威，客户端仓不留副本（2026-08-13 由 monorepo 改判分仓，理由见 design.md） |
+| `/Users/wanghl/loginbase-kt`（`HarlonWang/loginbase-kt`） | **姊妹仓**（2026-08-13 已建）：KMP 客户端库，独立版本线与 CI；协议以本仓 `docs/protocol.md` 为唯一权威，客户端仓不留副本。协议变更须在该仓开跟进 issue（现有 [#1](https://github.com/HarlonWang/loginbase-kt/issues/1) 跟进 1.2.0 的 link 流程） |
 | `/Users/wanghl/TrendingProjects/TrendingAI` | 消费方（第 4 步）：KMP 客户端；`androidApp/.../LogtoAuthManager.kt` 里的竞态防御经验是 loginbase-kt 的需求清单 |
 | `/Users/wanghl/TonoProjects/Tono-Android` | 消费方（第 5 步，不阻塞） |
 
@@ -22,4 +22,4 @@
 
 ## 当前状态
 
-第 0/1/2/3 步已完成（2026-08-13）：`loginbase@1.1.0`（providerProfile + 安全白名单）上线；Tono-Server 与 github-ai-trending-api 均已接入并部署生产——TrendingAI 为双轨（loginbase 优先 + Logto fallback 不断老版本，lib/auth.js，track 打点为退役数据源），email 回填 49 行（哨兵基线 94 只应降）、GitHub OAuth App 新旧分立（旧改名 Legacy 待阶段 4 删）。C 层验收全过（含 oauth 命中原账号、回滚演练实测）。客户端仓 `loginbase-kt` 未创建（2026-08-13 定为分仓，不再有 `kotlin/` 子目录）。下一步 = 第 4 步 KMP 客户端（含 C 方案升级过渡 UX，见 plan.md）；第 4 步的两个协议级议题已定案并实现，**`loginbase@1.2.0` 已发布**（2026-08-13，详见 plan.md 第 4 步）：①GitHub token 取回走「钩子透传 + App 自存」（库只加 scope 可配 + providerAccessToken + verifiedEmails）；②新增「已登录用户绑定第二身份」语义（link/start + onLinked + callback 按 state.mode 分流，业界模式 A）。**未做的收尾**：按分仓纪律需在 `loginbase-kt` 仓开 link 协议跟进 issue（仓未建）；TrendingAI 后端尚未接 onLinked 与 GitHub token 加密存储。观察项：TrendingAI 双轨 track 占比、email 哨兵、Tono refresh 事件频率。
+第 0/1/2/3 步已完成（2026-08-13）：`loginbase@1.1.0`（providerProfile + 安全白名单）上线；Tono-Server 与 github-ai-trending-api 均已接入并部署生产——TrendingAI 为双轨（loginbase 优先 + Logto fallback 不断老版本，lib/auth.js，track 打点为退役数据源），email 回填 49 行（哨兵基线 94 只应降）、GitHub OAuth App 新旧分立（旧改名 Legacy 待阶段 4 删）。C 层验收全过（含 oauth 命中原账号、回滚演练实测）。客户端仓 `loginbase-kt` 未创建（2026-08-13 定为分仓，不再有 `kotlin/` 子目录）。下一步 = 第 4 步 KMP 客户端（含 C 方案升级过渡 UX，见 plan.md）；第 4 步的两个协议级议题已定案并实现，**`loginbase@1.2.0` 已发布**（2026-08-13，详见 plan.md 第 4 步）：①GitHub token 取回走「钩子透传 + App 自存」（库只加 scope 可配 + providerAccessToken + verifiedEmails）；②新增「已登录用户绑定第二身份」语义（link/start + onLinked + callback 按 state.mode 分流，业界模式 A）。第 4 步任务 1 亦完成：`loginbase-kt` 仓已建（骨架 + CI + 协议错误码契约测试，三 target 编译验过），跟进 issue #1 已开。**未做**：新仓 Maven Central 四个 secrets 待配（本人操作）；客户端核心实现（任务 2~3）；TrendingAI 后端尚未接 onLinked 与 GitHub token 加密存储。观察项：TrendingAI 双轨 track 占比、email 哨兵、Tono refresh 事件频率。
