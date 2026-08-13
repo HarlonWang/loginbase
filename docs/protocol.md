@@ -1,6 +1,8 @@
 # loginbase 协议契约
 
-> **本文件是 API 契约的唯一权威**。协议变更必须与服务端实现同 commit（`kotlin/` 建立后升级为三位一体，见 CLAUDE.md 铁律）。版本号即协议版本：本文对应 `loginbase@1.0.0`。
+> **本文件是 API 契约的唯一权威**，只住服务端仓——客户端仓 `HarlonWang/loginbase-kt` 只链接、不留副本。协议变更必须与服务端实现同 commit，并在客户端仓开跟进 issue、客户端版本落地前不关（2026-08-13 分仓后的纪律，见 CLAUDE.md 铁律与 design.md）。
+>
+> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.0.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
 >
 > 结构与决策背景见 [server-design.md](server-design.md)；本文只记 wire 层事实。
 

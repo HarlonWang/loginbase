@@ -10,13 +10,13 @@
 | 1. 平移 | `loginbase` 0.1.x（Tono 专用） | Tono-Server 现有测试全绿 | 0 |
 | 2. 钩子化 | 1.0.0（泛化，可供外部消费） | Tono 测试依旧绿（等价性）+ 钩子路径新测试 | 1 |
 | 3. TrendingAI 接入 | github-ai-trending-api 双轨上线 | 新注册走 loginbase；存量用户映射回原 user_id | 2 |
-| 4. KMP 客户端 | `wang.harlon:loginbase-kt` + TrendingAI 登录 UI | 两端协议契约测试对齐；新版登录全流程可用 | 2（骨架可先行） |
+| 4. KMP 客户端 | 新仓 `loginbase-kt` → `wang.harlon:loginbase-kt` 0.1.x + TrendingAI 登录 UI | 两端协议契约测试对齐；新版登录全流程可用 | 2（骨架可先行） |
 | 5. Tono-Android 换用 | 择机 | 现有登录回归通过 | 4 |
 
 ## 第 0 步：发布设施（一次性，半天量级）✅ 2026-08-12 完成
 
 1. 包骨架：`package.json`（ESM、`exports` 单入口、`files: dist+migrations`、hono peer / jose dep）、`tsconfig` ×2（开发/构建）、vitest + `@cloudflare/vitest-pool-workers` + 测试用 `wrangler.toml`（D1/KV binding）。
-2. CI：`build.yml`（push/PR 跑测试）+ `publish.yml`（tag `[0-9]+.[0-9]+.[0-9]+*` 触发；npm job 先行，第 4 步再加 maven job——同一 workflow，一个 tag 锁两端）。
+2. CI：`build.yml`（push/PR 跑测试）+ `publish.yml`（tag `[0-9]+.[0-9]+.[0-9]+*` 触发 npm publish）。*（当时计划「第 4 步在同一 workflow 加 maven job，一个 tag 锁两端」，2026-08-13 分仓后作废：maven 发布归客户端仓自有 workflow。）*
 3. npm trusted publishing：在 npmjs 侧为 `loginbase` 配置 GitHub Actions OIDC；**若首次发布不被 trusted publishing 支持，首版本地手动 `npm publish` 兜底，之后全走 CI**。
 4. 版本线约定：0.1.x = 平移期 Tono 专用；1.0.0 = 钩子化完成、对外可用；此后协议演进走 1.x，**版本号即协议版本**。
 
@@ -44,7 +44,7 @@
 2. `onEvent` 钩子（默认实现保持单行 JSON console.log）；
 3. zh/en 内置邮件模板 + `brand` / `locale` / `templates` 配置；
 4. github-oauth 插件（start / callback / otc exchange，见 server-design.md 草案）——**编码前先把协议细节落 `protocol.md`**；
-5. `protocol.md` 全量落笔：端点、错误码、限流参数、轮换/救活语义（server-design.md 端点表为底稿）；此后服务端 + protocol.md 同 commit 纪律生效（kotlin/ 建立后升级为三位一体）；
+5. `protocol.md` 全量落笔：端点、错误码、限流参数、轮换/救活语义（server-design.md 端点表为底稿）；此后服务端 + protocol.md 同 commit 纪律生效（第 4 步分仓后追加「客户端仓开跟进 issue」）；
 6. 发 `1.0.0`。
 
 **验收**：Tono 测试依旧全绿（钩子化等价性证明）+ 库内新增钩子/模板/oauth 路径测试。Tono 的 wire 格式（`user.isPro` 等）经钩子透传保持不变，线上客户端无感。
@@ -125,11 +125,13 @@
 
 ## 第 4 步：KMP 客户端 + TrendingAI 登录 UI
 
-1. `kotlin/` gradle 工程骨架（照抄 kmp-webview：vanniktech 插件、android + iosArm64 + iosSimulatorArm64、坐标 `wang.harlon:loginbase-kt`）——可与第 3 步并行；
+> **2026-08-13 定：客户端走独立仓 `HarlonWang/loginbase-kt`**（原计划的 `kotlin/` 子目录取消，理由见 design.md「两个仓库」节）。`protocol.md` 仍只住服务端仓，客户端仓不留副本；两仓独立版本线，tag 各为裸版本号，客户端从 `0.1.0` 起步。
+
+1. 新建 `HarlonWang/loginbase-kt` 仓 + gradle 工程骨架（照抄 kmp-webview：vanniktech 插件、android + iosArm64 + iosSimulatorArm64、坐标 `wang.harlon:loginbase-kt`）+ 其自有 build/publish workflow（publish 照抄本仓 `publish.yml`，runner 换 macos）——可与第 3 步并行；
 2. 核心实现：`AuthClient`（send/verify/refresh/signOut 的 Ktor 封装）、`TokenStore` 接口 + multiplatform-settings 默认实现、`AuthState` flow、**单飞 refresh**（护栏预算的客户端前提，见 server-design.md 场景矩阵）；
 3. LogtoAuthManager 竞态经验逐条固化核对：token 获取互斥串行化、丢回执重试（与救活配合）、时钟偏差归因、invalid_refresh_token 判定与登出策略；
-4. 协议契约测试：对 `protocol.md` 的错误码/字段断言两端各写一套；`publish.yml` 加 maven job（macos runner，凭证从 HarlonWang/secrets 配 GitHub Secrets）；
-5. TrendingAI shared 接入（commonMain 登录 UI），发版切换；协议三位一体纪律（服务端 + kotlin/ + protocol.md 同 commit）从此全面生效。
+4. 协议契约测试：对 `protocol.md` 的错误码/字段断言两端各写一套（客户端侧 ktor MockEngine）；客户端仓 publish workflow 打通（macos runner，凭证从 HarlonWang/secrets 配 GitHub Secrets）；
+5. TrendingAI shared 接入（commonMain 登录 UI），发版切换；分仓版协议纪律（服务端 + protocol.md 同 commit + 客户端仓跟进 issue）从此全面生效。
 
 **验收**：loginbase-kt 发布可拉取；TrendingAI 新版邮箱 + GitHub 登录全流程可用；竞态清单逐条有对应测试或代码注释交代；升级过渡 UX 按下述 C 方案验收。
 
@@ -150,7 +152,7 @@ android target 接入 loginbase-kt，替换其现有登录实现；验收 = Tono
 ## 横切约定
 
 - **每步一个独立验证点，未过不进下一步**；步内小任务可乱序，步间不可。
-- 版本与 tag：`0.1.0`（第 1 步）→ `1.0.0`（第 2 步）→ 1.x；一个 tag 同时触发 npm + maven（第 4 步后）两个 publish job。
-- 协议纪律生效时点：第 2 步起「服务端 + protocol.md 同 commit」，第 4 步起三位一体。
+- 版本与 tag：本仓 `0.1.0`（第 1 步）→ `1.0.0`（第 2 步）→ 1.x，tag 为裸版本号只触发 npm publish；客户端仓自有版本线（`0.1.0` 起）与 publish workflow，互不触发（2026-08-13 分仓后定）。
+- 协议纪律生效时点：第 2 步起「服务端 + protocol.md 同 commit」；第 4 步起追加「客户端仓开跟进 issue，版本落地前不关」。CI 自动校验协议版本一致性暂不加，协议开始高频演进时再补。
 - 本仓库当前为骨架阶段的直接提交模式；第 1 步动工起，规模大的改动按全局 Git 工作流规则走分支/PR。
 - **执行确认节奏**（2026-08-12 与实施约定一并定）：步间必停——每步验收点达成后汇报并确认再进下一步；外部动作必停——发 npm 包、修改关联仓库（Tono-Server 等）、生产部署、npmjs 网页配置，即使发生在步内也单独确认；步内连续执行不逐任务确认。需用户亲自参与的动作：npm 首发 OTP、npmjs trusted publishing 配置、生产部署。

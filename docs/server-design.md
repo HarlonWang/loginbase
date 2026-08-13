@@ -225,14 +225,14 @@ test/             # vitest + @cloudflare/vitest-pool-workers
 ```
 
 - **依赖**：`hono` 为 peerDependency（^4，子应用与消费方共享同一实例语义）；`jose` 为 dependency（^6，纯内部使用）；不引 zod（见协议节）。devDeps 限 typescript / vitest / @cloudflare/vitest-pool-workers / @cloudflare/workers-types / wrangler。
-- **构建**：纯 `tsc` 出 ESM + d.ts（Workers 全 ESM，无需 bundler，省一个 devDep）；`package.json` `exports` 单入口，`files` 只含 `dist/` + `migrations/`（`kotlin/`、`docs/` 天然排除）。
+- **构建**：纯 `tsc` 出 ESM + d.ts（Workers 全 ESM，无需 bundler，省一个 devDep）；`package.json` `exports` 单入口，`files` 只含 `dist/` + `migrations/`（`docs/`、`test/` 天然排除）。
 - **发布**：npm registry，tag 触发 CI + trusted publishing（见 design.md 分发节）。
 
 ## 测试策略
 
 - 框架沿用母本：vitest + @cloudflare/vitest-pool-workers（miniflare 提供真 D1/KV，不 mock 存储层）；Resend 以 fetch mock 拦截。
 - 测试双层分布：**单元/handler 级测试搬进本包**（code/session/token/rate_limit/email + auth_* 五组 HTTP 测试，改 import 指向包内 app）；**Tono-Server 保留其集成测试**（走它自己的 app 与真实挂载），改依赖本包后全绿即第 1 步验收——同一套断言在两个仓库分别守「库自身正确」与「抽取未破坏消费方」。
-- 协议契约测试与 `protocol.md` 同步演进：错误码表、限流参数、救活行为各有对应断言，protocol 改动无测试跟随视为违反三位一体铁律。
+- 协议契约测试与 `protocol.md` 同步演进：错误码表、限流参数、救活行为各有对应断言，protocol 改动无测试跟随视为违反协议纪律（见 CLAUDE.md 铁律）。
 
 ## 平移策略（第 1 步 ↔ 端态）
 

@@ -21,12 +21,17 @@
 
 选 A 的核心理由：各 App 用户群与 Pro 模型完全不同（GitHub Sponsors 锚定 vs 邮箱注册送试用），统一账号眼下无产品收益，却要立刻支付多租户复杂度与单点风险。**如果将来要跨 App 统一账号，路线要重开**——这是当时明确保留的开关。
 
-## Monorepo：一份协议，两个产物
+## 两个仓库：一份协议，两个产物
 
-服务端库与客户端库共享同一份 API 协议（端点、错误码、限流语义、轮换救活行为），**协议是本仓库的核心资产**。拆两仓协议漂移只是时间问题；单仓一次 commit 同改两端 + 契约文档，一个 tag 锁定两侧，**版本号即协议版本**。
+服务端库与客户端库共享同一份 API 协议（端点、错误码、限流语义、轮换救活行为），**协议是本项目的核心资产**。`protocol.md` 住在服务端仓（错误码、限流参数、轮换救活语义都是服务端行为，权威在此），客户端仓 `HarlonWang/loginbase-kt` 只链接、**不留副本**。
 
-- npm 包根在仓库根（`package.json` 用 `files` 字段排除 `kotlin/`），KMP 是 `kotlin/` 下的独立 gradle 工程。
-- 协议变更纪律：服务端 + 客户端 + `protocol.md` 必须同 commit。
+- **2026-08-13 由 monorepo 改判为分仓**（`kotlin/` 尚未创建，零迁移成本；第 4 步动工前定案）。初版选 monorepo 的理由是「拆两仓协议漂移只是时间问题，单仓一次 commit 同改两端，一个 tag 锁定两侧」，改判基于三点复核：
+  1. **monorepo 的机械保证比预期弱**——`protocol.md` 是 markdown、不可执行，两端契约测试无论同仓分仓都是人手写断言对着人读的文档；单仓唯一硬保证是「同一个 commit」这个 git 事实，而单人开发下它拦不住一个人分两次 commit，实际价值是提醒而非强制；
+  2. **业界同形状项目主流即分仓**——OpenTelemetry（spec/proto 仓 + 各语言 SDK 仓）、Stripe（OpenAPI spec 仓 + 各语言 SDK 仓）、LSP 都是「协议一处 + 实现各仓 + 显式协议版本」，本项目引以为据的「协议版本与实现版本分离」正出自这些分仓项目；
+  3. **两个产物早已完全解耦**——不同 registry、不同 runner（Maven 侧必须 macos）、不同成熟度（服务端已生产 1.1.0，客户端未出生）。单仓要维持这种解耦，反要付出前缀 tag（`loginbase@1.2.0`）、workflow tag 分流、发布前剥前缀等一整套复杂度；分仓后这些全部消失，两边各自回到裸版本号 tag。
+- 附带收益：CI 不再因改 Kotlin 而白跑 TS 测试（反之亦然）；IntelliJ 的 KMP 工程与编辑器的 TS 工程索引/工具链互不干扰；第 5 步 Tono-Android 接入时面对的是纯客户端仓。
+- **代价与补偿**：协议漂移从「commit 层机械阻止」降级为「靠纪律」。补偿手段是两端各留 `PROTOCOL_VERSION` 常量 + 变更走双仓 issue 留痕（见下方纪律）；**CI 自动校验暂不加**（2026-08-13 决定），协议真开始高频演进时再补。
+- 协议变更纪律（分仓版）：服务端实现 + `protocol.md` 必须同 commit；同时在 `loginbase-kt` 仓开跟进 issue，客户端版本落地前不关。
 
 ## 服务端库设计
 
@@ -49,6 +54,7 @@ const auth = createLogin({
 
 ## 客户端库设计（loginbase-kt）
 
+- 仓库：`HarlonWang/loginbase-kt`（独立仓，见上节改判）；协议以本仓 `protocol.md` 为准，客户端仓 README 声明自己对齐到哪个 `loginbase@x.y.z`。
 - 范围：`AuthClient`（send/verify/refresh/signOut 的 Ktor 封装）、`TokenStore` 接口（默认 multiplatform-settings 实现）、`AuthState` flow、**单飞 refresh**。
 - 把 TrendingAI LogtoAuthManager 里沉淀的竞态经验一次性固化：token 获取互斥串行化、丢回执重试（与服务端救活机制配合）、时钟偏差归因、invalid_grant 判定。
 - 消费方：TrendingAI shared（commonMain，iOS 白拿）、Tono-Android（android target）。
@@ -60,11 +66,11 @@ const auth = createLogin({
     1. **版本不可变**——registry 同一版本号不能重发不同内容，git tag 可被 force 移动；对 auth 库是供应链完整性属性，与依赖最小集红线同源；
     2. **解除「仓库必须 public」硬约束**——git 依赖时代 Workers Builds 云端装依赖无凭据、私有仓库必失败；registry 之后 public 与否降为普通偏好；
     3. **构建产物两难提前消解**——git 依赖发编译产物要么消费方 `prepare` 现场构建（慢、flaky），要么提交 `dist/` 进仓库；registry 发布时构建一次，消费方拿现成 tarball；
-    4. **安装干净**——只拉 `files` 筛过的 tarball，不 clone 整个 monorepo。
-- **KMP**：Maven Central 正式发包 `wang.harlon:loginbase-kt`（vanniktech maven-publish 插件，tag 触发 CI 在 macos runner 上 `publishAndReleaseToMavenCentral`），照抄 kmp-webview 的成熟链路；Sonatype 凭证与 GPG 签名密钥在私有仓库 HarlonWang/secrets 的 `maven-publishing/`（quickjs-wrapper / feedback-sdk 同源）。
+    4. **安装干净**——只拉 `files` 筛过的 tarball，不 clone 整个仓库。
+- **KMP**：Maven Central 正式发包 `wang.harlon:loginbase-kt`（vanniktech maven-publish 插件，`loginbase-kt` 仓的 tag 触发其自有 CI，在 macos runner 上 `publishAndReleaseToMavenCentral`），照抄 kmp-webview 的成熟链路；Sonatype 凭证与 GPG 签名密钥在私有仓库 HarlonWang/secrets 的 `maven-publishing/`（quickjs-wrapper / feedback-sdk 同源）。
   - 初版方案曾选 R2 静态 Maven（计划 `maven.harlon.wang`），排除 Central 的理由是「sonatype 流程过重」；2026-08-10 改判：重的部分（账号、`wang.harlon` namespace 验证、GPG key、插件与 workflow 配置）已在 kmp-webview 全部付清，Central 零新增成本，且版本不可变 + 强制 GPG 签名 + 消费方零 repository 配置；R2 自建仓反要维护域名/bucket/同步 workflow，且对象可覆盖、无不可变性——与 npm 侧弃 git-tag 是同一条供应链论证。
   - 仍排除：JitPack（Linux 构建机编不了 iOS target）、GitHub Packages（拉包也要 token）。
-- 发布沿用「打 tag 即发布」习惯：一个 tag 触发同一条 workflow，npm 与 Maven 两侧各自 CI publish，仍是一个 tag 锁两端。
+- 发布沿用「打 tag 即发布」习惯，**两仓各自独立版本线**：各仓一个产物，tag 即裸版本号（服务端 `1.2.0`、客户端 `0.1.0`），无需前缀与分流。协议兼容关系由 `protocol.md` 的版本历史 + 客户端 README 的对齐声明表达，不靠版本号相等表达（客户端从 `0.1.0` 起步，不因服务端已到 1.1.0 而虚高）。
 
 ## 技术选型：TypeScript（长期评估结论）
 
