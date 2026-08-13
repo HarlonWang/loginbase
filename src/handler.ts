@@ -25,6 +25,7 @@ import {
 import { signAccessToken, ACCESS_TTL_SECONDS } from "./token.js";
 import { createAuthMiddleware, type AuthVariables } from "./middleware.js";
 import { logEvent } from "./log.js";
+import { trimmedField } from "./body.js";
 import { registerGithubOauth } from "./plugins/github.js";
 import type { LoginConfig, VerifiedResult } from "./config.js";
 
@@ -48,7 +49,7 @@ export function createAuthApp<TEnv>(
     const body = await c.req
       .json<{ email?: string }>()
       .catch(() => ({} as { email?: string }));
-    const raw = (body.email ?? "").trim().toLowerCase();
+    const raw = trimmedField(body.email).toLowerCase();
     if (!/^\S+@\S+\.\S+$/.test(raw)) {
       return c.json({ error: "invalid_email" }, 400);
     }
@@ -78,8 +79,8 @@ export function createAuthApp<TEnv>(
     const body = await c.req
       .json<{ email?: string; code?: string }>()
       .catch(() => ({} as { email?: string; code?: string }));
-    const email = (body.email ?? "").trim().toLowerCase();
-    const code = (body.code ?? "").trim();
+    const email = trimmedField(body.email).toLowerCase();
+    const code = trimmedField(body.code);
 
     const stored = await readCode(cfg(c).kv, email);
     if (!stored) return c.json({ error: "code_expired" }, 400);
@@ -137,7 +138,7 @@ export function createAuthApp<TEnv>(
     const body = await c.req
       .json<{ refreshToken?: string }>()
       .catch(() => ({} as { refreshToken?: string }));
-    const token = (body.refreshToken ?? "").trim();
+    const token = trimmedField(body.refreshToken);
     if (!token) {
       return c.json(
         { error: "invalid_refresh_token", reason: "missing_token" },

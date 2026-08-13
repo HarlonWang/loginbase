@@ -3,6 +3,7 @@
 // 客户端再以 POST /oauth/exchange 兑换 token 对。
 import type { Hono } from "hono";
 import type { LoginConfig, GithubSocialConfig } from "../config.js";
+import { trimmedField } from "../body.js";
 import { createAuthMiddleware, type AuthVariables } from "../middleware.js";
 import { generateRefreshToken as randomToken } from "../session.js";
 import { createSession } from "../session.js";
@@ -211,7 +212,7 @@ export function registerGithubOauth<TEnv>(
     const body = await c.req
       .json<{ redirect?: string }>()
       .catch(() => ({}) as { redirect?: string });
-    const redirect = (body.redirect ?? "").trim();
+    const redirect = trimmedField(body.redirect);
     if (!redirect || !redirectAllowed(redirect, gh)) {
       return c.json({ error: "invalid_redirect" }, 400);
     }
@@ -324,7 +325,7 @@ export function registerGithubOauth<TEnv>(
     const body = await c.req
       .json<{ otc?: string }>()
       .catch(() => ({} as { otc?: string }));
-    const otc = (body.otc ?? "").trim();
+    const otc = trimmedField(body.otc);
     const key = `oauth:otc:${otc}`;
     const raw = otc ? await cfg(c).kv.get(key) : null;
     if (!raw) return c.json({ error: "invalid_otc" }, 400);
