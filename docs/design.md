@@ -56,7 +56,8 @@ const auth = createLogin({
 ## 客户端库设计（loginbase-kt）
 
 - 仓库：`HarlonWang/loginbase-kt`（独立仓，见上节改判）；协议以本仓 `protocol.md` 为准，客户端仓 README 声明自己对齐到哪个 `loginbase@x.y.z`。
-- 范围：`AuthClient`（send/verify/refresh/signOut 的 Ktor 封装）、`TokenStore` 接口（默认 multiplatform-settings 实现）、`AuthState` flow、**单飞 refresh**。
+- 范围：`AuthClient`（send/verify/refresh/signOut/oauth exchange/link 的 Ktor 封装）、`TokenStore` 接口 + 平台实现、`AuthState` flow、**单飞 refresh**。
+- **2026-08-13 依赖收紧**：原定的 `multiplatform-settings` 弃用，改为各平台自写十几行（Android `SharedPreferences`、iOS `NSUserDefaults`）。理由有三：①用途窄到不成比例（存两个字符串）；②Tono-Android 未必已有该依赖，届时是硬塞；③**落盘同步性是与服务端救活机制配套的正确性属性**——`SharedPreferences.apply()` 异步写在进程被杀时正好制造丢回执，而 multiplatform-settings 默认走 apply、要传参数才同步，把关键语义变成「记得给第三方库传对参数」。同批还砍掉 ktor 的 ContentNegotiation 两个依赖（请求体手工序列化）与 HTTP engine（消费方提供）。
 - 把 TrendingAI LogtoAuthManager 里沉淀的竞态经验一次性固化：token 获取互斥串行化、丢回执重试（与服务端救活机制配合）、时钟偏差归因、invalid_grant 判定。
 - 消费方：TrendingAI shared（commonMain，iOS 白拿）、Tono-Android（android target）。
 

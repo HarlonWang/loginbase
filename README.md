@@ -53,5 +53,5 @@ Kotlin 包    wang.harlon.loginbase
 
 ## 设计红线
 
-- 依赖最小集：服务端 hono + jose（+ zod-validator），客户端 ktor + kotlinx-serialization + multiplatform-settings。auth 库是供应链攻击的最高价值目标，每加一个依赖都要过一遍这个念头
+- 依赖最小集：服务端 hono + jose（+ zod-validator），客户端 ktor-client-core + kotlinx-serialization-json + kotlinx-coroutines-core。auth 库是供应链攻击的最高价值目标，每加一个依赖都要过一遍这个念头
 - 协议变更：服务端实现 + `docs/protocol.md` 同一个 commit，并在 `loginbase-kt` 仓开跟进 issue，客户端版本落地前不关（2026-08-13 由 monorepo 三位一体改判，理由见 design.md）
