@@ -22,4 +22,12 @@
 
 ## 当前状态
 
-第 0/1/2/3 步已完成（2026-08-13）：`loginbase@1.1.0`（providerProfile + 安全白名单）上线；Tono-Server 与 github-ai-trending-api 均已接入并部署生产——TrendingAI 为双轨（loginbase 优先 + Logto fallback 不断老版本，lib/auth.js，track 打点为退役数据源），email 回填 49 行（哨兵基线 94 只应降）、GitHub OAuth App 新旧分立（旧改名 Legacy 待阶段 4 删）。C 层验收全过（含 oauth 命中原账号、回滚演练实测）。客户端仓 `loginbase-kt` 未创建（2026-08-13 定为分仓，不再有 `kotlin/` 子目录）。下一步 = 第 4 步 KMP 客户端（含 C 方案升级过渡 UX，见 plan.md）；第 4 步的两个协议级议题已定案并实现，**`loginbase@1.2.0` 已发布**（2026-08-13，详见 plan.md 第 4 步）：①GitHub token 取回走「钩子透传 + App 自存」（库只加 scope 可配 + providerAccessToken + verifiedEmails）；②新增「已登录用户绑定第二身份」语义（link/start + onLinked + callback 按 state.mode 分流，业界模式 A）。第 4 步任务 1 亦完成：`loginbase-kt` 仓已建（骨架 + CI + 协议错误码契约测试，三 target 编译验过），跟进 issue #1 已开。**未做**：新仓 Maven Central 四个 secrets 待配（本人操作）；客户端核心实现（任务 2~3）；TrendingAI 后端尚未接 onLinked 与 GitHub token 加密存储。观察项：TrendingAI 双轨 track 占比、email 哨兵、Tono refresh 事件频率。
+**第 0~3 步已完成**；**第 4 步接近完成，只剩发版**（2026-08-14）。
+
+- **服务端**：`loginbase@1.2.0` 已发布（link 语义 + providerAccessToken/verifiedEmails 透传 + scope 可配）。
+- **客户端库**：`HarlonWang/loginbase-kt` 已建仓，核心实现完成（AuthClient / TokenStore 双平台 / AuthState / 单飞 refresh，25 测试），**未发 Maven**——TrendingAI 目前经 composite build 吃本地源码（`local.properties` 配 `loginbase-kt.dir`，是必需配置）。四个 Maven Central secrets 未配。
+- **后端消费方**（github-ai-trending-api，已部署生产）：GitHub token 加密保管（migration 039 + `GH_TOKEN_KEY`，密钥存档 `HarlonWang/secrets` 的 `trendingai-api/`）、`onLinked` 绑定、`GET/DELETE /api/github/token`、OAuth 白名单改用 wrangler vars、scope 补 `public_repo`。PR #32/33/34/35。
+- **客户端消费方**（TrendingAI）：**PR #99 待审**（`feat/loginbase-auth`，9 commits）。已完成登录面板（邮箱原生两屏 + GitHub）、OAuth 回跳（透明中转 Activity）、token 取回换自家端点、绑定改走 link 流程、业务请求 401 重试、C 方案升级横幅。
+- **生产真机验证过**：邮箱登录（命中原账号、重启恢复）、GitHub 登录（Pro 打通、`gh_token_enc` 落库）、升级横幅、回跳复用实例。**未验**：绑定 link 流程（需一个没绑 GitHub 的账号）。
+- **待讨论（挂起，见 plan.md 第 4 步「待讨论」）**：①单飞 refresh；②邮件 locale（方案已成型未实施）；③Android App Links（custom scheme 劫持的根治）；④**OAuth 回跳机制是否下沉到 loginbase-kt**（当前边界：库给 URL、消费方走完流程；决策取决于第 5 步是否接 Tono-Android）。
+- **观察项**：TrendingAI 双轨 track 占比、email 哨兵（基线 94 只应降）、Tono refresh 事件频率。
