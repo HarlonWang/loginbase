@@ -18,17 +18,22 @@ describe("POST /auth/code/send", () => {
   });
   afterEach(() => fetchSpy.mockRestore());
 
-  async function send(email: string, ip = "1.1.1.1") {
+  async function send(email: string, ip = "1.1.1.1", locale?: unknown) {
     return app.request(
       "/auth/code/send",
       {
         method: "POST",
         headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify(locale === undefined ? { email } : { email, locale }),
       },
       env
     );
   }
+
+  const sentSubject = () => {
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    return JSON.parse(init.body as string).subject as string;
+  };
 
   it("合法邮箱 → 200 { cooldownSeconds }，KV 写入 code:* 与 cooldown:*", async () => {
     const res = await send("u@example.com");
@@ -74,5 +79,35 @@ describe("POST /auth/code/send", () => {
     const res = await send("never-registered@example.com");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ cooldownSeconds: 60 });
+  });
+
+  // 夹具的 email 配置未设 fallbackLocale → 兜底 en（protocol 1.3.0 新增请求级 locale）
+  describe("请求级 locale", () => {
+    it("传 zh-Hans-CN → 中文邮件", async () => {
+      await send("a@example.com", "1.1.1.1", "zh-Hans-CN");
+      expect(sentSubject()).toContain("Tono 登录验证码");
+    });
+
+    it("传 Android 风格的 zh_CN 同样命中中文", async () => {
+      await send("b@example.com", "1.1.1.2", "zh_CN");
+      expect(sentSubject()).toContain("Tono 登录验证码");
+    });
+
+    it("不传 → 兜底英文", async () => {
+      await send("c@example.com", "1.1.1.3");
+      expect(sentSubject()).toMatch(/^Your Tono verification code: \d{6}$/);
+    });
+
+    it("传不支持的语言 → 静默回落英文，仍 200（永不 4xx）", async () => {
+      const res = await send("d@example.com", "1.1.1.4", "fr");
+      expect(res.status).toBe(200);
+      expect(sentSubject()).toContain("Your Tono verification code");
+    });
+
+    it("传非字符串 → 视为未传，不炸", async () => {
+      const res = await send("e@example.com", "1.1.1.5", { evil: true });
+      expect(res.status).toBe(200);
+      expect(sentSubject()).toContain("Your Tono verification code");
+    });
   });
 });

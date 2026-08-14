@@ -2,7 +2,7 @@
 
 > **本文件是 API 契约的唯一权威**，只住服务端仓——客户端仓 `HarlonWang/loginbase-kt` 只链接、不留副本。协议变更必须与服务端实现同 commit，并在客户端仓开跟进 issue、客户端版本落地前不关（2026-08-13 分仓后的纪律，见 CLAUDE.md 铁律与 design.md）。
 >
-> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.2.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
+> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.3.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
 >
 > 结构与决策背景见 [server-design.md](server-design.md)；本文只记 wire 层事实。
 
@@ -30,7 +30,7 @@
 
 ### POST /code/send
 
-请求：`{ "email": string }`
+请求：`{ "email": string, "locale"?: string }`
 
 | 结果 | 状态码 | 响应 |
 |---|---|---|
@@ -40,6 +40,13 @@
 | 邮件信道失败 | 500 | `{ "error": "internal" }` |
 
 限流三层（先到先拒，`retryAfterSeconds` 为对应窗口秒数）：单邮箱 60s 冷却 → 单邮箱 3 次/600s → 单 IP 10 次/3600s。发送失败不消耗任何限流额度。
+
+**`locale`（1.3.0 起，可选）**——本次验证码邮件的语言，BCP 47 标签（如 `zh-Hans-CN`、`en-GB`）。取值应为**用户在 App 里看到的界面语言**，而非系统首选语言（两者可能不同）。
+
+- **永不因 locale 报错**：不传、传空、传非字符串、传服务端不支持的语言，一律**静默回落**到服务端配置的兜底语言，**错误码表不新增任何一条**——客户端无需为此写任何错误处理分支。
+- 服务端归一化：`_`→`-`、转小写、截断 64 字符；匹配按 RFC 4647 Lookup **逐级砍子标签**（`zh-Hans-CN` → `zh-Hans` → `zh`）。故客户端传 Android `Locale.toString()` 的 `zh_CN` 也能命中，但**应传 `toLanguageTag()` 的标准形态**。
+- **取不到语言时应省略该字段，而不是传 `und`**——服务端把 `und`/`und-*` 与未传同等对待（两者结果一致），但客户端省略字段能让服务端事件区分「没传」与「传了但不支持」，是排查客户端链路故障的唯一信号。
+- 支持哪些语言由**各消费方的服务端配置**决定（库内置 `en`/`zh`，消费方可覆盖或新增），不是协议层的固定枚举——客户端不应硬编码支持集，传自己的语言即可。
 
 ### POST /code/verify
 
@@ -163,6 +170,8 @@ GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注�
 | `oauth:otc:{otc}` | 60s | 一次性授权码载荷（单次） |
 
 ## 版本历史
+
+- **1.3.0**（2026-08）：`POST /code/send` 新增**可选** `locale`（BCP 47），决定本次验证码邮件的语言；**错误码零新增**——未知/非法值静默回落服务端兜底语言，客户端无新增错误分支。**wire 向后兼容**：不传即为 1.2.0 行为；老服务端收到该字段会忽略它（请求体逐字段读取，无严格校验），故客户端可先于服务端发布。⚠️ **同版本含配置 API 的 BREAKING 变更**（不影响 wire，故未推 major）：`email.locale` 更名为 `email.fallbackLocale`（旧键不再识别）、`email.templates` 由整体覆盖改为按 locale 分表且模板签名改为 `(ctx) => string`——**消费方升级依赖时必须同步改配置**，详见 server-design.md「语言与模板体系」。
 
 - **1.2.0**（2026-08）：新增 `POST /oauth/github/link/start` 与 callback 的 **link 分支**（已登录用户绑定第二身份，`onLinked` 钩子，不建会话不发 token）；GitHub authorize 的 `scope` 改为服务端可配（默认 `user:email`）；`onVerified`/`onLinked` 的 identity 新增 `providerAccessToken`（库只透传不存储）与 `verifiedEmails`（全部已验证邮箱，归一化小写）。**向后兼容**：1.1.0 期间写入的 state 载荷无 `mode`，新代码按 login 分支处理，滚动升级期在飞的授权不受影响。
 
