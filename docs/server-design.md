@@ -21,8 +21,8 @@ const login = createLogin<Env>((env) => ({
     resendApiKey: env.RESEND_API_KEY,
     from: env.EMAIL_FROM_ADDRESS,
     brand: "Tono",                            // 进邮件标题/正文
-    locale: "en",                             // 内置 zh/en 模板（第 2 步）
-    templates: { subject, html, text },       // 可选整体覆盖
+    fallbackLocale: "en",                     // 客户端没说时用哪个语言，默认 en（1.3.0；原 locale）
+    templates: { zh: { subject } },           // 可选，按 locale 键：覆盖内置或新增语言（1.3.0）
   },
   session: { refreshTtlMs: null },            // null = refresh 不过期（Tono 现状）
   onVerified: async (identity) => ({ userId, isNewUser, user }),
@@ -172,8 +172,80 @@ users 表**不归库**——库对 `user_id` 只存不读，用户表结构、�
 ## 邮件
 
 - 信道 Resend（`https://api.resend.com/emails`，Bearer key），与 Tono 生产同款；QQ/163 送达率验证与 DirectMail 备选见 design.md 风险节。
-- 端态模板体系（第 2 步）：内置 zh/en 两套（`brand` 注入标题与正文），`templates` 整体覆盖钩子留给完全自定义；母本硬编码的 Tono 英文模板即 en 模板的雏形。
-- 发送已是独立函数（`sendCodeEmail`），将来换信道 = 换实现，不动 handler；transport 接口抽象列入将来项，现在不做。
+- 端态模板体系（第 2 步）：内置 zh/en 两套（`brand` 注入标题与正文），`templates` 整体覆盖钩子留给完全自定义；母本硬编码的 Tono 英文模板即 en 模板的雏形。**1.3.0 起模板体系改按语言分表，见下节。**
+- 发送已是独立函数（`sendCodeEmail`），将来换信道 = 换实现，不动 handler；transport 接口抽象列入将来项，现在不做。**`send` 钩子**（把发送整个让给消费方，better-auth / Auth.js 核心库的形态）同属将来项，2026-08-14 评估后挂起：它是解开「硬编码 Resend」的唯一口子，但会让「开箱即用」失效，而 Tono 正靠它零配置发信——等真有人要换服务商时再说。
+
+### 语言与模板体系（1.3.0，2026-08-14 定案）
+
+**要解决的两件事**。① 邮件语言此前只由服务端静态配置决定，客户端语言完全不参与——TrendingAI 模拟器实测撞见「App UI 英文、收到中文验证码邮件」。② 同一处的结构性缺陷：`templates` 是全有全无的整体覆盖，且「提供时 brand/locale 不生效」——**消费方一旦想改一句文案，就永久失去多语言能力，还连带丢掉 brand**。②不是新功能，是修缺陷；只做①会把这个缺陷固化下来。
+
+**配置形状**：
+
+```ts
+interface TemplateContext {
+  code: string;
+  brand?: string;
+  locale: string;        // 本封邮件的「选中语言」
+  email: string;
+  ttlMinutes: number;    // 解开「10 分钟」写死在文案里的约定耦合（CODE_TTL_SECONDS）
+}
+type Part = (ctx: TemplateContext) => string;
+interface EmailTemplate { subject?: Part; html?: Part; text?: Part }   // 三件皆可选
+
+interface EmailConfig {
+  resendApiKey: string;
+  from: string;
+  brand?: string;
+  fallbackLocale?: string;                    // 原 locale；封闭枚举 "en"|"zh" 放宽为 string，默认 "en"
+  templates?: Record<string, EmailTemplate>;  // 按 locale 键：覆盖内置，或新增内置没有的语言
+}
+```
+
+协议侧：`POST /code/send` 请求体新增**可选** `locale`（BCP 47），错误码表**不新增任何一条**。
+
+**三条规则**：
+
+> ① **语言只解析一次**：请求 `locale` → `fallbackLocale` → 库内置 `en`，第一个命中者即**选中语言**。
+> ② **模板在选中语言内部合并，永不跨语言**：库内置打底，消费方逐部件覆盖。
+> ③ **选中语言不在支持集时，整封换成兜底语言**，回到规则 ②。
+
+**支持集 = 库内置语言（en / zh）∪ { 消费方写全三件的语言 }**。判据不是「消费方写了几件」，而是**「缺的几件能不能用同一种语言补上」**：内置已有的语言永远补得上，故消费方爱写几件写几件；内置没有的语言只有消费方一个来源，不写全就没人能补。
+
+| 内置有 | 消费方给 | 结果 |
+|---|---|---|
+| ✅ | 无 / 部分 / 齐全 | 内置 / **同语言合并** / 全用消费方 |
+| ❌ | 齐全 | 全用消费方（新增语言） |
+| ❌ | **部分** | 该语言不成立 → **整封回落兜底语言** + 配置告警 |
+| ❌ | 无 | 整封回落兜底语言 |
+
+`brand` 独立于所有层级，始终经 `ctx.brand` 送达（含消费方模板）——这修掉了「一给 templates，brand 就失效」。
+
+**为什么禁止跨语言混搭**。当缺件无处可取时有三条路：从别的语言补（→ 日文标题 + 英文正文）、报错（→ 用户登不进去）、判定该语言不成立（→ 整封兜底语言）。选第三条：**降级要降到一个仍然成立的状态，而不是残缺状态**；一封验证码邮件是一个整体，半日半英是"看起来像坏了"的产物，而整封英文虽非所愿，却完整可读、照样能登录。规则挡的是**意外**不是**故意**——真想要日文标题配英文正文，把 `ja` 三件写全、`html`/`text` 返回英文内容即可。
+
+**归一化与匹配**：非字符串/空 → 视为未传；`_`→`-`（Android `Locale.toString()` 给 `zh_CN`）；转小写（Twilio 同时列 `pt-br` 与 `pt-BR`，佐证大小写不敏感）；长度截断 64。匹配用 RFC 4647 Lookup 简化版**逐级砍子标签**（`zh-hans-cn`→`zh-hans`→`zh`），不一步截到主语言——**Keycloak 的 zh-CN/zh-TW → zh-Hans/zh-Hant 迁移直接证明这是对的**，将来加繁体模板时 `zh-Hant` 才不会掉进简体。
+
+**静默回落，永不 4xx**：传 `fr` 就发兜底语言，绝不 4xx。**与 Twilio Verify 相反**（它对不支持的 locale 返 404，并建议调用方去掉参数重试）——差别在调用方：Twilio 的是服务端（接得住 404），我们的是移动 App，一个 4xx 会让用户登不进去；而"去掉 locale 重试"这件事我们在服务端一步做完，效果相同、少一次往返。代价是不可观测，故**最终选中的语言与是否回落必须进 `onEvent`**。
+
+**不完整配置必须响一声**：消费方给了内置没有的语言却没写全三件时，他的模板一次都不会被用上，而配置语法完全合法、从代码里看不出来。故在**首次发信时**校验一次并经 `onEvent` 报出（`WeakSet` 按 config 对象记忆化；config 本身按 isolate 记忆化，故等价于每实例一次，热路径零成本；挂在发信而非启动，是为了只在真用到邮件时才出声）：`{ event: "email_template_config", locale: "ja", status: "incomplete", missing: ["html","text"] }`。**不抛异常、不阻断启动**——模板配错不该让登录服务起不来，与"静默回落"同一取向：可用性优先于模板正确性。另两类告警同理，都是「语法合法但永远不生效」的死配置：`unsupported_fallback`（兜底语言自己都不在支持集里，实际用库内置 en）、`invalid_locale_key`（归一化认不出的键，如 `"中文"`，会被索引直接丢掉、永不命中）。
+
+**旧键 `locale` 直接删、不留兼容，且不为此推 major**（2026-08-14 定，发 1.3.0）：受影响面实测为零——两个消费方都没用过 `templates`；`email.locale` 只有 TrendingAI 配了 `'zh'`，而它走 loginbase 的客户端尚未发布，**这个配置项至今没渲染过任何一封生产邮件**（商店版走 Logto 托管页发信）。兼容层是为零个受益者付复杂度。**代价在升级时自己扛**：github-ai-trending-api 是裸 JS Worker、没有类型检查兜底，漏改配置时 `locale: "zh"` 会被静默忽略，故**升级依赖与改配置必须同一个 PR**，且冒烟断言要能区分（断言"中文用户收到的 subject 含中文"，而不是"接口 200"——后者在退化时同样成立）。
+
+**演进纪律（新增）**：**库内置新增一门语言，是接入方可观察的行为变更**——某消费方原本给 `ja` 只写了 subject（整封回落 en + 告警），库内置加了 ja 之后，同一份配置变成"消费方 subject + 内置 ja 正文"，告警也消失。方向是好的，但它静默发生。同理将来加 `zh-Hant`：今天传 `zh-Hant` 收简体的用户，会在库升级后无改动地开始收繁体。故：**内置新增语言按 minor 发布，release note 必须列出「新增语言 X；若你的 `templates` 里有 X 的部分覆盖，其行为将从整体回落变为合并」**。它不是协议变更（wire 未动），但属同一类需要纪律的东西。
+
+**明确不做**：模板引擎（Liquid/Handlebars，撞依赖最小集）、远程模板 URI（Kratos 那套）、把语言偏好存进用户档案（撞「不存用户档案」的既定边界）。**我们的模板是纯 TS 函数**——Kratos 要靠 go template 嵌套、Auth0 要靠 Liquid 条件才能拿到的表达力，我们零依赖天生就有，设计应顺着这个优势走，而不是模仿字符串模板体系。
+
+**业界对照（2026-08-14 查证）**：
+
+| 产品 | 内置模板 | 消费方覆盖粒度 | 多语言 |
+|---|---|---|---|
+| better-auth（核心库） | **无** | 契约就是 `sendVerificationEmail`，渲染与发送全归消费方 | 库这层不存在此问题 |
+| `@better-auth/infra`（付费托管） | 有 | 传 variables | **不支持**（变量表无 locale；但有 `expirationMinutes`，佐证 `ctx.ttlMinutes`） |
+| Ory Kratos | 有 | **按部件**（subject/html/plaintext 各自可选，回落内置） | 非一等公民：消费方在自己模板里写 `{{ if eq .Identity.traits.language "de" }}` |
+| Keycloak | 有 | 主题覆盖 | `messages_<locale>.properties` 按语言分文件，新旧语言码兼容映射 |
+| Twilio Verify | 有 | 自建 custom template | `translations` **按 locale 键的 map** + `is_default_translation`；请求级 `Locale`；**但邮件通道明确不支持翻译** |
+| Auth0 / Supabase / Firebase | 有 | 单模板 | Auth0 靠 Liquid 条件；Supabase 至今无 i18n；Firebase 由控制台单选、官方建议自己发信 |
+
+结论：**没有任何一家是「库内置一个封闭语言枚举、消费方只能二选一」**——而这正是 1.x 的现状。本方案取 Twilio 的「按 locale 分表」+ Kratos 的「部件级回落」，两者都收在同一语言内。
 
 ## 钩子
 

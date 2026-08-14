@@ -135,4 +135,77 @@ describe("onEvent", () => {
     expect(events.map((e) => e.outcome)).toContain("rescued");
     expect(logSpy).not.toHaveBeenCalled();
   });
+
+  // 静默回落是有意设计（永不 4xx），代价是不可观测——故语言解析结果必须留痕
+  describe("邮件语言留痕（1.3.0）", () => {
+    let fetchSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(async () => {
+      await wipeKv();
+      fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response("{}", { status: 200 }));
+    });
+    afterEach(() => fetchSpy.mockRestore());
+
+    async function sendWith(
+      email: Partial<LoginConfig["email"]>,
+      body: Record<string, unknown>
+    ) {
+      const events: Record<string, unknown>[] = [];
+      const login = makeLogin({
+        email: {
+          resendApiKey: env.RESEND_API_KEY,
+          from: env.EMAIL_FROM_ADDRESS,
+          ...email,
+        },
+        onEvent: (e: Record<string, unknown>) => events.push(e),
+      });
+      const res = await login.app.request(
+        "/auth/code/send",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "CF-Connecting-IP": "9.9.9.9" },
+          body: JSON.stringify(body),
+        },
+        env
+      );
+      return { res, events };
+    }
+
+    it("命中时记选中语言，未传不算回落", async () => {
+      const { events } = await sendWith({}, { email: "l1@x.com", locale: "zh-Hans-CN" });
+      expect(events).toContainEqual({
+        event: "code_sent",
+        locale: { resolved: "zh", requested: "zh-hans-cn" },
+      });
+
+      const plain = await sendWith({}, { email: "l2@x.com" });
+      expect(plain.events).toContainEqual({
+        event: "code_sent",
+        locale: { resolved: "en" },
+      });
+    });
+
+    it("回落时标记 fallback，可据此统计不传 locale 的老客户端占比", async () => {
+      const { events } = await sendWith({}, { email: "l3@x.com", locale: "fr" });
+      expect(events).toContainEqual({
+        event: "code_sent",
+        locale: { resolved: "en", requested: "fr", fallback: true },
+      });
+    });
+
+    it("配置有问题时首次发信即告警（不阻断发送）", async () => {
+      const { res, events } = await sendWith(
+        { templates: { ja: { subject: (c) => c.code } } },
+        { email: "l4@x.com", locale: "ja" }
+      );
+      expect(res.status).toBe(200);
+      expect(events).toContainEqual({
+        event: "email_template_config",
+        status: "incomplete",
+        locale: "ja",
+        missing: ["html", "text"],
+      });
+    });
+  });
 });

@@ -29,5 +29,6 @@
 - **后端消费方**（github-ai-trending-api，已部署生产）：GitHub token 加密保管（migration 039 + `GH_TOKEN_KEY`，密钥存档 `HarlonWang/secrets` 的 `trendingai-api/`）、`onLinked` 绑定、`GET/DELETE /api/github/token`、OAuth 白名单改用 wrangler vars、scope 补 `public_repo`。PR #32/33/34/35。
 - **客户端消费方**（TrendingAI）：**PR #99 待审**（`feat/loginbase-auth`，9 commits）。已完成登录面板（邮箱原生两屏 + GitHub）、OAuth 回跳（透明中转 Activity）、token 取回换自家端点、绑定改走 link 流程、业务请求 401 重试、C 方案升级横幅。
 - **生产真机验证过**：邮箱登录（命中原账号、重启恢复）、GitHub 登录（Pro 打通、`gh_token_enc` 落库）、升级横幅、回跳复用实例。**未验**：绑定 link 流程（需一个没绑 GitHub 的账号）。
-- **待讨论（挂起，见 plan.md 第 4 步「待讨论」）**：①单飞 refresh；②邮件 locale（方案已成型未实施）；③Android App Links（custom scheme 劫持的根治）；④**OAuth 回跳机制是否下沉到 loginbase-kt**（当前边界：库给 URL、消费方走完流程；决策取决于第 5 步是否接 Tono-Android）。
+- **待讨论（挂起，见 plan.md 第 4 步「待讨论」）**：①单飞 refresh；③Android App Links（custom scheme 劫持的根治）；④**OAuth 回跳机制是否下沉到 loginbase-kt**（当前边界：库给 URL、消费方走完流程；决策取决于第 5 步是否接 Tono-Android）。
+- **邮件语言与模板体系**（2026-08-14 定案，原「邮件 locale」挂起项关闭）：**库侧已实现，待发 `loginbase@1.3.0`**（分支 `feat/email-locale`，114 测试绿）——`locale`→`fallbackLocale` 正名（旧键直接删、不留兼容）、`templates` 改按语言分表 + 部件级、请求级 `locale`、客户端 `localeProvider`。**含配置 API 的 BREAKING 但不推 major**：受影响面实测为零（走 loginbase 的客户端尚未发布，`locale: 'zh'` 至今没渲染过生产邮件）。方案见 server-design.md「语言与模板体系」+ design.md 客户端节，实施批次见 plan.md 同名小节。剩余：客户端 loginbase-kt、消费方改名（须与升级依赖同 PR）、发版。
 - **观察项**：TrendingAI 双轨 track 占比、email 哨兵（基线 94 只应降）、Tono refresh 事件频率。

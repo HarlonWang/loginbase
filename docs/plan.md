@@ -18,7 +18,7 @@
 1. 包骨架：`package.json`（ESM、`exports` 单入口、`files: dist+migrations`、hono peer / jose dep）、`tsconfig` ×2（开发/构建）、vitest + `@cloudflare/vitest-pool-workers` + 测试用 `wrangler.toml`（D1/KV binding）。
 2. CI：`build.yml`（push/PR 跑测试）+ `publish.yml`（tag `[0-9]+.[0-9]+.[0-9]+*` 触发 npm publish）。*（当时计划「第 4 步在同一 workflow 加 maven job，一个 tag 锁两端」，2026-08-13 分仓后作废：maven 发布归客户端仓自有 workflow。）*
 3. npm trusted publishing：在 npmjs 侧为 `loginbase` 配置 GitHub Actions OIDC；**若首次发布不被 trusted publishing 支持，首版本地手动 `npm publish` 兜底，之后全走 CI**。
-4. 版本线约定：0.1.x = 平移期 Tono 专用；1.0.0 = 钩子化完成、对外可用；此后协议演进走 1.x，**版本号即协议版本**。
+4. 版本线约定：0.1.x = 平移期 Tono 专用；1.0.0 = 钩子化完成、对外可用；此后协议演进走 1.x，**版本号即协议版本**。**配置 API 的破坏性变更不单独推 major**（2026-08-14 定，首例是 1.3.0 的邮件模板体系）——它不动 wire，随协议 minor 一起发，在 `protocol.md` 版本历史里显式标 BREAKING 并写清消费方要改什么。
 
 ## 第 1 步：平移（0.1.x，铁律 3 辖区）✅ 2026-08-12 完成
 
@@ -236,31 +236,59 @@
 - **Android App Links**（2026-08-13 记）：当前 OAuth 回跳用 custom scheme（`cn.trendingai://`），Android 对它**无所有权验证**——恶意 App 可抢注同名 scheme 劫持 `otc`（60s 内可换整对令牌）。Logto 时代同样如此（其控制台里 release/debug 两条 URI 一直都在），非本次引入。根治手段是 App Links（`https://` + `assetlinks.json` 签名校验），代价是要处理 debug 签名指纹与域名验证，属独立一块工作。RFC 8252 的偏好顺序也是 claimed HTTPS URI > private-use scheme。
 - **单飞 refresh**（2026-08-13 挂起）：实现已随 loginbase-kt PR #2 落地（互斥锁 + 进锁后重读复用，8 并发收敛为 1 次请求，反向验证过），但**本人要求列为待讨论点**，后续再一起过。涉及面：它是服务端救活护栏（1h/3 次）的客户端前提，两端是一套机制的两半（见 server-design.md 场景矩阵与 design.md 会话模型）；若讨论后改变客户端策略，服务端护栏参数可能要跟着重估。
 
-#### 邮件 locale（2026-08-13 挂起，方案已成型，待主流程结束后单独对齐再实施）
+### 邮件语言与模板体系（2026-08-14 定案，待实施；原「邮件 locale」挂起项就此关闭）
 
-**起源**：模拟器端到端实测时发现——App UI 是英文，收到的验证码邮件却是中文。因为邮件语言只由服务端 `EmailConfig.locale` 静态决定（TrendingAI 配了 `zh`），客户端语言完全不参与。
+**起源**：模拟器端到端实测发现「App UI 英文、收到中文验证码邮件」——邮件语言只由服务端静态配置决定，客户端语言完全不参与。**2026-08-14 重新过一遍时改判**：原方案（只加一个请求级 `locale` 参数、发 1.3.0）**只回答了「语言信号从哪来」，没回答「消费方能不能配模板」**；而现状 `templates` 与 `locale` 互斥——消费方一旦想改一句文案就永久失去多语言能力并连带丢掉 `brand`——是结构性缺陷，只做前者会把它固化。两件事一起做。
 
-**已确认的两个决定**（本人拍板）：①locale 要做；②TrendingAI 的兜底语言从 `zh` 改成 `en`（英语是更通用的兜底；中文用户的语言走请求级传上来，不受影响）。
+> **完整方案在别处，此处不重复**：服务端配置形状 / 三条规则 / 支持集 / 归一化匹配 / 不完整配置告警 / 演进纪律 / 业界对照 → `server-design.md`「语言与模板体系」节；客户端 `localeProvider` 与平台取值 → `design.md`「客户端库设计」节。本节只记**实施顺序、时序约束与验收**。
 
-**方案（待实施）**：`POST /code/send` 请求体加**可选** `locale`，发 `loginbase@1.3.0`。三层回落：
+**四处改动**：
 
-| 层 | 谁定 | 说明 |
+| # | 侧 | 改动 |
 |---|---|---|
-| ① 请求级 | 客户端每次传 | 本次新增 |
-| ② App 兜底 | 消费方 `createLogin` 的 `email.locale` | 语义由「本 App 邮件语言」演变为「兜底语言」 |
-| ③ 库内置 | `en` | App 未配时才露面 |
+| 1 | 库（服务端） | `locale` → `fallbackLocale`（正名 + 放宽为 string）；`templates` 由整体覆盖改为**按 locale 分表 + 部件级可选**；模板签名 `(code) => string` → `(ctx) => string`；内置 zh/en 由三元判断重构成表；配置解析期告警 |
+| 2 | 协议 | `POST /code/send` 请求体加**可选** `locale`（BCP 47），错误码表**零新增** → 客户端无任何新错误分支 |
+| 3 | 客户端库 | loginbase-kt 加 `localeProvider`（默认 `platformLanguageTag`）+ 平台 expect/actual |
+| 4 | 消费方 | TrendingAI 后端改键名（**必须与升级依赖同一个 PR**，裸 JS 无类型检查兜底）；值取 `'zh'` 还是直接省掉，看下表 A/B；Tono-Server 无 diff |
 
-- **归一化**：非字符串/空 → 视为未传；`_`→`-`（Android `Locale.toString()` 给的是 `zh_CN`，只有 `toLanguageTag()` 才是 BCP 47）；转小写；长度截断 64。
-- **匹配**：RFC 4647 Lookup 简化版，**逐级砍子标签**（`zh-hans-cn`→`zh-hans`→`zh`），不一步截到主语言——将来加繁体模板时 `zh-Hant` 才不会掉进简体。支持集 = `BUILTIN` 表的 key（加语言只改一处，不另维护白名单）。
-- **静默回落，永不报错**：传 `fr` 就发兜底语言，绝不 4xx。语言是展示偏好不是凭据；且天然兼容「客户端比服务端新」（新版传 `ja` 而服务端无日文模板时照样能登录）。
-- `templates`（整体覆盖）存在时以上全跳过，行为不变。
-- 建议把最终选中的 locale 记进 `onEvent`——静默回落意味着「为什么收到英文邮件」在日志里查不出来。
+**版本决定（2026-08-14 定）**：**发 `1.3.0`，含破坏性配置变更，且不做任何兼容逻辑**。即：旧键 `locale` 直接删、`templates` 旧形状不认，也不推 major。
 
-**最佳实践对照结论**：显式参数派（Twilio Verify 的 `Locale`、OIDC `ui_locales`、Auth0）与请求头派（Firebase `X-Firebase-Locale`、`Accept-Language`）中选前者，因为 **App 内语言设置未必等于系统语言**，只有显式传参反映用户在 App 里的选择。不把语言偏好存账户上（Stripe `preferred_locales` 那种做法）——loginbase 只发用户主动触发的验证码邮件，请求上下文必有语言信息；且语言偏好属用户档案，是既定的「不解决」边界。协议只返回错误**码**、文案在客户端，故服务端 i18n 面仅限邮件模板这一处。
+依据是**受影响面实测为零**：① Tono-Server 与 github-ai-trending-api **都没用过 `templates`**（只用 `brand` + 内置）；② `email.locale` 只有 TrendingAI 配了 `'zh'`，而它的 loginbase 邮件轨道**在生产上从未发过一封信**——商店版走 Logto 托管页由 Logto 发信，而走 loginbase 的新版（PR #99）尚未发布。**这个配置项至今没有渲染过任何一封生产邮件**，改名不影响任何真实用户。既然如此，兼容层是为零个受益者付复杂度，major 号也只是给零个受影响方发的通知。
 
-**已澄清的事实**（避免重复讨论）：TrendingAI 现商店版本走 Logto 托管页，验证码由 **Logto** 发，与 `EmailConfig.locale` 无关——故改兜底语言对现有用户**零影响**，无需等新版发布。真正「不传 locale 的客户端」是 Tono-Android（Tono-Server 已用 loginbase 发邮件），但 Tono 兜底本就是 `en`，改动后逐字节不变（第 2 步的 en+brand=Tono 模板锁定测试守着）。
+约束仍在：**消费方升级依赖与改配置必须同一个 PR**（裸 JS Worker 没有类型检查兜底），且冒烟断言要能区分——断言「中文用户收到的 subject 含中文」，而不是「接口返回 200」（后者在退化时同样成立，等于没验证；这正是第 4 步栽过的形态）。
 
-**实施时补一条测试**：`en + brand=TrendingAI` 的模板快照——该组合从未上过生产（TrendingAI 一直固定 zh、Tono 固定 en+brand=Tono）。
+**时序：三代客户端，其中 G1 是否存在取决于发版顺序**（TrendingAI 侧）
+
+| 世代 | 发信方 | 传 locale | 现状 |
+|---|---|---|---|
+| G0 商店版（Logto 托管页） | Logto | — | 在线，不受本节任何改动影响 |
+| G1 = PR #99 这一版 | loginbase | **不传** | **尚未发布** |
+| G2 支持 locale 的版本 | loginbase | 传 | 待做 |
+
+**关键事实（2026-08-14 确认）**：走 loginbase 发信的客户端一个都还没上线，**TrendingAI 的 loginbase 邮件轨道在生产上零流量**。因此本节所有改动当下影响面为零，而**G1 这个人群是否会存在，取决于两件事的先后**：
+
+| 顺序 | 后果 |
+|---|---|
+| **✅ A（2026-08-14 选定）：locale 先落地，TrendingAI 首个 loginbase 版本直接是 G2** | **G1 从不存在**：无人靠兜底吃语言，服务端一步到位省掉 `fallbackLocale`（= 库内置 en），下面的观察与择时全部不需要。代价是 PR #99 等这条链走完再发 |
+| B. PR #99 先发，locale 随后 | 产生 G1 人群：**`fallbackLocale: 'zh'` 必须保留到 G1 退场**——G2 发布那一刻 G1 仍是多数，此时兜底若已是 `en`，G1 的中文用户会集体从中文切成英文（净退化）。判据用 `onEvent` 的 `locale.fallback: true` 占比，看数不用猜 |
+
+> 顺序 B 的这条约束修正了 2026-08-13 版「兜底改 en 需与客户端传参同批」的说法（同批仍会伤到 G1）；更早那句「改兜底对现有用户零影响、无需等新版发布」只在 G1 未发时成立，选 A 则它恰好一直成立。
+
+**各批之间没有硬顺序耦合**（已核实：`src/handler.ts` 逐字段读请求体、**未用 zod 也无严格校验**，未知字段被静默忽略）→ 新客户端传 `locale` 打到老服务端不会 400，只会被忽略走兜底。故库、服务端、客户端可各自按节奏发；唯一的顺序问题就是上表 A/B 的选择。
+
+**实施批次**（每批独立可验，批间可停）：
+
+1. **库 1.3.0**：`resolveTemplates` 重写（三条规则 + 支持集 + 部件合并）、`fallbackLocale` 改名、`ctx` 化模板签名、内置表化、配置告警、`/code/send` 读 locale、`onEvent` 记 locale；`protocol.md` 同 commit 落 1.3.0 并写版本历史；`loginbase-kt` 开跟进 issue（客户端落地前不关）。
+2. **客户端 loginbase-kt**：`localeProvider` + `platformLanguageTag()` expect/actual + MockEngine 契约测试；发版本（**前置：Maven Central 四个 secrets 需先配好**，见第 4 步任务 1）。
+3. **消费方**：TrendingAI 后端改名照搬（不改值）；TrendingAI 客户端随下一次发版自然获得 G2 能力（库默认自动传，**客户端零代码改动**）。
+4. **仅顺序 B 需要**：观察 `locale.fallback` 占比，G1 退场后删掉 `fallbackLocale: 'zh'`。顺序 A 下这一批不存在。
+
+**验收与测试**：
+
+- 库内：三条规则的组合矩阵（内置有/无 × 消费方无/部分/齐全）；逐级砍子标签（`zh-Hans-CN`/`zh_CN`/`en-GB`/`fr`/`zh-Hant`）；不完整配置告警的存在性；**`en + brand=Tono` 逐字节锁定测试必须继续绿**（第 2 步立的等价性证明，是这次重构的安全网）。
+- 补两个**从未上过生产的组合**快照：`en + brand=TrendingAI`、**`zh + brand=Tono`**（后者随第 5 步生效，见下）。
+- 客户端三条：①不配 provider → 请求体含 `locale` 且为 BCP 47 形态；②`localeProvider = { null }` → 字段**仍在**，值为平台语言（`null` = 没意见，回落而非关闭）；③平台语言也取不到时 → 字段**缺席**（而非 `null`）。
+- 端到端：App 切英文 → 收英文邮件；切中文 → 收中文；传 `fr` → 收兜底语言且 `onEvent` 有 `fallback: true`。
 
 ### 升级过渡 UX（C 方案，2026-08-12 定）
 
@@ -276,10 +304,19 @@
 
 android target 接入 loginbase-kt，替换其现有登录实现；验收 = Tono-Android 登录回归通过。无时间压力，作为客户端库第二消费方的泛化性检验。
 
+**⚠️ 接入会带来一次邮件语言变化，属预期而非回归**（2026-08-14 推演出）：Tono-Server 没配兜底（= 内置 `en`），而库内置支持 `zh`；Tono-Android 今天不传 locale，故所有人收英文邮件。换用 loginbase-kt 后客户端**默认自动上报 App 显示语言** → 中文用户开始收**中文邮件**（内置 zh + `brand=Tono`）。三点注意：
+
+1. **现有安全网抓不到它**——第 2 步那条「en + brand=Tono 逐字节锁定」测试锁的是「en 模板长什么样」，不是「谁会收到 en 模板」；第 5 步做完它**依然全绿**，而生产行为已变。
+2. **归因方向是反的**：邮件内容变了，第一反应会去查发信侧（服务端/模板/Resend），但根因是一次客户端发版，中间还隔着商店审核周期。
+3. **`zh + brand=Tono` 从未上过生产**（Tono 一直 en、TrendingAI 一直 zh+自己的 brand），排版与字体栈没被真人看过——**先补快照测试再发**。
+
+验收清单追加一条：中文用户邮件语言由英文变中文，符合预期。若不想要这个变化，写 `localeProvider = { "en" }`（一律英文，效果等同退回原状）——客户端**没有**「关闭上报」的开关，也不需要，见 design.md 客户端节的两条规则。
+
 ## 横切约定
 
 - **每步一个独立验证点，未过不进下一步**；步内小任务可乱序，步间不可。
 - 版本与 tag：本仓 `0.1.0`（第 1 步）→ `1.0.0`（第 2 步）→ 1.x，tag 为裸版本号只触发 npm publish；客户端仓自有版本线（`0.1.0` 起）与 publish workflow，互不触发（2026-08-13 分仓后定）。
 - 协议纪律生效时点：第 2 步起「服务端 + protocol.md 同 commit」；第 4 步起追加「客户端仓开跟进 issue，版本落地前不关」。CI 自动校验协议版本一致性暂不加，协议开始高频演进时再补。
+- **行为变更纪律**（2026-08-14 加）：有些改动不动 wire、不算协议变更，却会改变接入方可观察的行为——**库内置新增一门邮件语言**是首例（消费方对该语言的部分覆盖会从「整体回落」变成「合并」，且原有告警消失；传 `zh-Hant` 的用户会在库升级后无改动地从简体变繁体）。这类改动按 minor 发布，**release note 必须逐条列出行为差异**。同理内置模板文案变更（部件级覆盖的接入方会得到「旧主题 + 新正文」的组合，这是部件级覆盖的固有代价，Kratos 亦然）。
 - 本仓库当前为骨架阶段的直接提交模式；第 1 步动工起，规模大的改动按全局 Git 工作流规则走分支/PR。
 - **执行确认节奏**（2026-08-12 与实施约定一并定）：步间必停——每步验收点达成后汇报并确认再进下一步；外部动作必停——发 npm 包、修改关联仓库（Tono-Server 等）、生产部署、npmjs 网页配置，即使发生在步内也单独确认；步内连续执行不逐任务确认。需用户亲自参与的动作：npm 首发 OTP、npmjs trusted publishing 配置、生产部署。

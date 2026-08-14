@@ -10,7 +10,11 @@ import {
   incrementAttempts,
   MAX_ATTEMPTS,
 } from "./code.js";
-import { sendCodeEmail } from "./email.js";
+import {
+  sendCodeEmail,
+  resolveEmailLocale,
+  warnEmailConfigOnce,
+} from "./email.js";
 import { checkSendRateLimit, recordSend } from "./rate_limit.js";
 import {
   createSession,
@@ -47,8 +51,8 @@ export function createAuthApp<TEnv>(
 
   auth.post("/code/send", async (c) => {
     const body = await c.req
-      .json<{ email?: string }>()
-      .catch(() => ({} as { email?: string }));
+      .json<{ email?: string; locale?: unknown }>()
+      .catch(() => ({} as { email?: string; locale?: unknown }));
     const raw = trimmedField(body.email).toLowerCase();
     if (!/^\S+@\S+\.\S+$/.test(raw)) {
       return c.json({ error: "invalid_email" }, 400);
@@ -64,11 +68,23 @@ export function createAuthApp<TEnv>(
     }
 
     const code = generateCode();
+    const emitEvent = emit(c);
+    warnEmailConfigOnce(cfg(c).email, emitEvent);
+    const locale = resolveEmailLocale(cfg(c).email, body.locale);
     try {
-      await sendCodeEmail(cfg(c).email, raw, code);
+      await sendCodeEmail(cfg(c).email, raw, code, locale.locale);
     } catch {
       return c.json({ error: "internal" }, 500);
     }
+    // 静默回落意味着「为什么收到英文邮件」在别处查不出来，故选中语言必须留痕
+    emitEvent({
+      event: "code_sent",
+      locale: {
+        resolved: locale.locale,
+        ...(locale.requested ? { requested: locale.requested } : {}),
+        ...(locale.fallback ? { fallback: true } : {}),
+      },
+    });
 
     await storeCode(cfg(c).kv, raw, code);
     await recordSend(cfg(c).kv, raw, ip);

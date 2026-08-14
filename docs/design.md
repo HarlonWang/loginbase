@@ -56,7 +56,17 @@ const auth = createLogin({
 ## 客户端库设计（loginbase-kt）
 
 - 仓库：`HarlonWang/loginbase-kt`（独立仓，见上节改判）；协议以本仓 `protocol.md` 为准，客户端仓 README 声明自己对齐到哪个 `loginbase@x.y.z`。
-- 范围：`AuthClient`（send/verify/refresh/signOut/oauth exchange/link 的 Ktor 封装）、`TokenStore` 接口 + 平台实现、`AuthState` flow、**单飞 refresh**。
+- 范围：`AuthClient`（send/verify/refresh/signOut/oauth exchange/link 的 Ktor 封装）、`TokenStore` 接口 + 平台实现、`AuthState` flow、**单飞 refresh**、**邮件语言上报**（`localeProvider` + `platformLanguageTag()`，见下）。
+- **邮件语言上报（2026-08-14 定，随服务端 1.3.0 落地）**：客户端侧只有两个公开概念——`AuthClient(localeProvider: () -> String? = ::platformLanguageTag)` 与平台取值函数 `platformLanguageTag()`。**规则只有两条**：
+
+  | 意图 | 写法 | 发出去的 `locale` |
+  |---|---|---|
+  | 跟随系统语言 | 什么都不写 | 平台语言，如 `zh-Hans-CN` |
+  | App 内自选语言，没选时跟随系统 | `localeProvider = { settings.tag }` | 选了 → 该值；返回 `null` → **回落平台语言** |
+
+  **`null` 只有一个含义：「我没意见」**（空串与 `und` 同）。刻意**不做「彻底不发」的开关**——唯一想得到的用途是第 5 步 Tono 若不要"中文用户改收中文邮件"这个变化，而那用 `localeProvider = { "en" }` 表达更直接（效果等同，且写明了意图是"一律英文"而非"关掉某个机制"）；真需要时加一个带默认值的布尔是向后兼容的，删不掉才麻烦。同理**不设调用级参数**——"同一 App 同一会话里对不同邮件用不同语言"的需求不存在。平台语言也取不到时（Android 给 `und`、iOS 给空数组）才真的不发字段，由服务端兜底，正常设备走不到。
+
+  平台取值（2026-08-14 查证）：Android `Locale.getDefault().toLanguageTag()`——它**已跟随 per-app language**，且零依赖；**不用 `AppCompatDelegate.getApplicationLocales()`**（用户没手动设过时返回空列表、必须在 `Activity#onCreate` 之后调、还会拖进 appcompat 依赖），**不用 `toString()`**（给 `zh_CN`，非 BCP 47）。iOS `Bundle.main.preferredLocalizations.first`——它是**App 实际显示的语言**，而 `Locale.preferredLanguages.first` 是用户首选语言（App 未做该语言时两者不等）；取前者，因为这件事的起点就是「App UI 与邮件语言割裂」，取后者会造出新的割裂。每次调用现取不缓存（用户可能中途切语言）。
 - **2026-08-13 依赖收紧**：原定的 `multiplatform-settings` 弃用，改为各平台自写十几行（Android `SharedPreferences`、iOS `NSUserDefaults`）。理由有三：①用途窄到不成比例（存两个字符串）；②Tono-Android 未必已有该依赖，届时是硬塞；③**落盘同步性是与服务端救活机制配套的正确性属性**——`SharedPreferences.apply()` 异步写在进程被杀时正好制造丢回执，而 multiplatform-settings 默认走 apply、要传参数才同步，把关键语义变成「记得给第三方库传对参数」。同批还砍掉 ktor 的 ContentNegotiation 两个依赖（请求体手工序列化）与 HTTP engine（消费方提供）。
 - 把 TrendingAI LogtoAuthManager 里沉淀的竞态经验一次性固化：token 获取互斥串行化、丢回执重试（与服务端救活机制配合）、时钟偏差归因、invalid_grant 判定。
 - 消费方：TrendingAI shared（commonMain，iOS 白拿）、Tono-Android（android target）。
