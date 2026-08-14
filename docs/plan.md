@@ -281,7 +281,8 @@
 1. ✅ **库 1.3.0 已发布**（2026-08-14，PR #7 → tag → CI → OIDC，provenance 正常）：`resolveTemplates` 重写（三条规则 + 支持集 + 部件合并）、`fallbackLocale` 改名、`ctx` 化模板签名、内置表化、配置告警、`/code/send` 读 locale、`onEvent` 记 locale；`protocol.md` 同 commit 落 1.3.0。测试 87 → 116。
    > 执行实录：**Sourcery 本周额度用尽（`weekly rate limit`），该 PR 无 AI 审查**，改为自审，抓到 `templates` 里归一化认不出的键（如 `"中文"`）会被索引静默丢掉——语法合法却永不命中的死配置，补 `invalid_locale_key` 告警。三条核心规则做过反向验证（支持集放宽 / 一步截主语言 / 跨语言取件，还原任一即转红）；其中「一步截主语言」第一次**没转红**，说明测试没真区分，补 `zh-Hant-TW` 三级标签用例才有效——两级标签在两种实现下结果相同，是个会骗过 review 的盲区。registry 冒烟用**真包**跑了 14 条断言（含「旧键 `locale` 不再生效」的 BREAKING 实证）。
 2. ✅ **客户端 loginbase-kt 已实现、未发版**（2026-08-14，[PR #4](https://github.com/HarlonWang/loginbase-kt/pull/4) 合并）：`localeProvider` + `platformLanguageTag()` expect/actual + 契约测试（23 → 33，含 host test 用 `Locale.ROOT` 构造「系统给不出语言」）；`PROTOCOL_VERSION` 1.3.0。**发版仍卡在 Maven Central 四个 secrets**（见第 4 步任务 1），故跟进 [issue #3](https://github.com/HarlonWang/loginbase-kt/issues/3) 按纪律**保持打开**（PR 正文的 `closes` 误关过一次，已重开）。
-3. **消费方**：TrendingAI 后端改名照搬（不改值）；TrendingAI 客户端随下一次发版自然获得 G2 能力（库默认自动传，**客户端零代码改动**）。
+3. ✅ **消费方已上线**（2026-08-14，[PR #36](https://github.com/HarlonWang/github-ai-trending-api/pull/36) 合并即自动部署生产）：依赖钉死 `1.3.0`（不用 caret——配置 BREAKING 会随 minor 发，`^` 不再等于「可安全自动升级」）、删掉 `locale: 'zh'` 且**不配 `fallbackLocale`**、新增 5 个测试把断言落在**实际发给 Resend 的 subject** 上。TrendingAI 客户端随下一次发版自然获得 G2 能力（库默认自动传，**客户端零代码改动**）。
+   > **反向验证推翻了一个原以为的风险**：单纯留着旧键 `locale: 'zh'` 是**无害**的（键被忽略、兜底落到库内置 en，恰好是想要的结果）；真正会退化的是**把旧值照搬到新键** `fallbackLocale: 'zh'`（3 个测试转红）。故升级动作的重点不是「别忘了改名」，而是「重新决定兜底语言应该是什么」。
 4. **仅顺序 B 需要**：观察 `locale.fallback` 占比，G1 退场后删掉 `fallbackLocale: 'zh'`。顺序 A 下这一批不存在。
 
 **验收与测试**：
