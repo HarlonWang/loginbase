@@ -223,6 +223,16 @@
 
 ### 待讨论（挂起，动 TrendingAI 前需对齐）
 
+- **OAuth 回跳机制是否下沉到 loginbase-kt**（2026-08-14 记，审查中提出）：当前边界是「库给 URL，消费方走完流程」——`githubSignInUrl()` / `githubLinkUrl()` 在库里，而**打开浏览器、deepLink 注册、回跳解析、取消兜底、接收 Activity 全在消费方**。design.md 的客户端范围只写了 AuthClient/TokenStore/AuthState/单飞，从未论证过这条线。
+
+  **代价已经兑现**：第 4 步在 TrendingAI 侧踩的两个坑（关掉浏览器无回调导致面板永远转圈、回跳新建 Activity 实例导致 otc 无人消费）都与业务无关、且**任何用 loginbase 做 OAuth 的 App 都要各踩一遍**——第 5 步 Tono-Android 接入时会原样重来。
+
+  **业界把这条线划在另一侧**：AppAuth（`RedirectUriReceiverActivity` + `AuthorizationManagementActivity`）与 Logto SDK（两个 Activity 都在 SDK manifest 里）都把浏览器往返关在库内，消费方只注入一个 scheme placeholder。
+
+  **下沉的代价**：①Android 侧要引 `androidx.browser`（Custom Tabs）——**直接撞依赖最小集红线**，绕法是退回 `Intent.ACTION_VIEW` 或让消费方传「打开 URL」的回调、库只接管回跳一半；②库要带 Activity + manifest，「库不含 UI」这条边界需要更精确的措辞（Activity 属平台集成，不是 UI）；③iOS 的 `ASWebAuthenticationSession` 自带取消回调，与 Android 机制完全不同，两端各写一套。
+
+  **决策取决于第 5 步**：Tono-Android 确定要接则下沉收益实打实；短期不接就是为假想的第二消费方付成本。
+
 - **Android App Links**（2026-08-13 记）：当前 OAuth 回跳用 custom scheme（`cn.trendingai://`），Android 对它**无所有权验证**——恶意 App 可抢注同名 scheme 劫持 `otc`（60s 内可换整对令牌）。Logto 时代同样如此（其控制台里 release/debug 两条 URI 一直都在），非本次引入。根治手段是 App Links（`https://` + `assetlinks.json` 签名校验），代价是要处理 debug 签名指纹与域名验证，属独立一块工作。RFC 8252 的偏好顺序也是 claimed HTTPS URI > private-use scheme。
 - **单飞 refresh**（2026-08-13 挂起）：实现已随 loginbase-kt PR #2 落地（互斥锁 + 进锁后重读复用，8 并发收敛为 1 次请求，反向验证过），但**本人要求列为待讨论点**，后续再一起过。涉及面：它是服务端救活护栏（1h/3 次）的客户端前提，两端是一套机制的两半（见 server-design.md 场景矩阵与 design.md 会话模型）；若讨论后改变客户端策略，服务端护栏参数可能要跟着重估。
 
