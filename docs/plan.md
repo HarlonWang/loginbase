@@ -249,7 +249,7 @@
 | 1 | 库（服务端） | `locale` → `fallbackLocale`（正名 + 放宽为 string）；`templates` 由整体覆盖改为**按 locale 分表 + 部件级可选**；模板签名 `(code) => string` → `(ctx) => string`；内置 zh/en 由三元判断重构成表；配置解析期告警 |
 | 2 | 协议 | `POST /code/send` 请求体加**可选** `locale`（BCP 47），错误码表**零新增** → 客户端无任何新错误分支 |
 | 3 | 客户端库 | loginbase-kt 加 `localeProvider`（默认 `platformLanguageTag`）+ 平台 expect/actual |
-| 4 | 消费方 | TrendingAI 后端改键名（**必须与升级依赖同一个 PR**，裸 JS 无类型检查兜底）；值取 `'zh'` 还是直接省掉，看下表 A/B；Tono-Server 无 diff |
+| 4 | 消费方 | ✅ TrendingAI 后端升级依赖 + 删掉旧键（[PR #36](https://github.com/HarlonWang/github-ai-trending-api/pull/36)，顺序 A 下连 `fallbackLocale` 都不配）；Tono-Server 无 diff |
 
 **版本决定（2026-08-14 定）**：**发 `1.3.0`，含破坏性配置变更，且不做任何兼容逻辑**。即：旧键 `locale` 直接删、`templates` 旧形状不认，也不推 major。
 
