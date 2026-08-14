@@ -69,6 +69,18 @@ const auth = createLogin({
   平台取值（2026-08-14 查证）：Android `Locale.getDefault().toLanguageTag()`——它**已跟随 per-app language**，且零依赖；**不用 `AppCompatDelegate.getApplicationLocales()`**（用户没手动设过时返回空列表、必须在 `Activity#onCreate` 之后调、还会拖进 appcompat 依赖），**不用 `toString()`**（给 `zh_CN`，非 BCP 47）。iOS `Bundle.main.preferredLocalizations.first`——它是**App 实际显示的语言**，而 `Locale.preferredLanguages.first` 是用户首选语言（App 未做该语言时两者不等）；取前者，因为这件事的起点就是「App UI 与邮件语言割裂」，取后者会造出新的割裂。每次调用现取不缓存（用户可能中途切语言）。
 - **2026-08-13 依赖收紧**：原定的 `multiplatform-settings` 弃用，改为各平台自写十几行（Android `SharedPreferences`、iOS `NSUserDefaults`）。理由有三：①用途窄到不成比例（存两个字符串）；②Tono-Android 未必已有该依赖，届时是硬塞；③**落盘同步性是与服务端救活机制配套的正确性属性**——`SharedPreferences.apply()` 异步写在进程被杀时正好制造丢回执，而 multiplatform-settings 默认走 apply、要传参数才同步，把关键语义变成「记得给第三方库传对参数」。同批还砍掉 ktor 的 ContentNegotiation 两个依赖（请求体手工序列化）与 HTTP engine（消费方提供）。
 - 把 TrendingAI LogtoAuthManager 里沉淀的竞态经验一次性固化：token 获取互斥串行化、丢回执重试（与服务端救活机制配合）、时钟偏差归因、invalid_grant 判定。
+- **单飞 refresh 的边界与业界对照（2026-08-14 查证后定案，待讨论项①就此关闭）**：
+
+  | 产品 | 做法 |
+  |---|---|
+  | **Auth0.swift / Auth0.Android** `CredentialsManager` | 串行队列 / synchronized，**只保证实例内**；文档明写「不要从多个实例调用续期方法」 |
+  | **AppAuth**（OIDC 移动端参考实现） | **不做合并**——并发 `performActionWithFreshTokens` 会用同一个 refresh token 刷多次被服务端拒，[iOS #716](https://github.com/openid/AppAuth-iOS/issues/716) / [Android #309](https://github.com/openid/AppAuth-Android/issues/309) 长期开着，官方立场是「自己加同步」 |
+  | **Supabase** auth-js | 做到**跨标签页**（Web Locks + BroadcastChannel），代价是孤儿锁挂死、无限等待死锁等一串生产故障 |
+  | **Ktor** `Auth` 插件 | 官方文档明写内建单飞，**但只协调装了插件的那一个 `HttpClient`** |
+  | **本库** | 互斥锁 + 进锁后重读复用，**每进程一个实例** |
+
+  三条结论：①**我们与 Auth0 同形**——比 AppAuth 严（它根本不合并），比 Supabase 保守（不碰跨进程），「单实例约束」是这类 SDK 的通行边界而非偷懒；②**Ktor 的方案替代不了**——TrendingAI 的 commonMain 里就有 3 个独立 `HttpClient`（加库自己的共 4 个），插件级单飞管不到跨 client，两者是叠加关系（消费方可在自己的 client 上装 `Auth`，`refreshTokens` 回调里调 `authClient.refresh()`）；③**刻意不做跨进程锁**——失败代价不对称，没有它最坏是多刷一次、烧一格救活配额，有了它最坏是认证彻底卡死。
+- **与业界的一处有意分歧**：主流是**定时器提前刷**（Supabase autoRefresh、MSAL 近过期即刷），本库是**纯 401 驱动的被动刷**。因为主动刷要读 `exp` → 依赖设备时钟，正是 Logto 时代「模拟器慢 63 秒直接登录失败」的病灶。用一次多余往返换掉整类时钟偏差问题。
 - 消费方：TrendingAI shared（commonMain，iOS 白拿）、Tono-Android（android target）。
 
 ## 分发

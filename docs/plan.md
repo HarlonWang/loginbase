@@ -234,7 +234,7 @@
   **决策取决于第 5 步**：Tono-Android 确定要接则下沉收益实打实；短期不接就是为假想的第二消费方付成本。
 
 - **Android App Links**（2026-08-13 记）：当前 OAuth 回跳用 custom scheme（`cn.trendingai://`），Android 对它**无所有权验证**——恶意 App 可抢注同名 scheme 劫持 `otc`（60s 内可换整对令牌）。Logto 时代同样如此（其控制台里 release/debug 两条 URI 一直都在），非本次引入。根治手段是 App Links（`https://` + `assetlinks.json` 签名校验），代价是要处理 debug 签名指纹与域名验证，属独立一块工作。RFC 8252 的偏好顺序也是 claimed HTTPS URI > private-use scheme。
-- **单飞 refresh**（2026-08-13 挂起）：实现已随 loginbase-kt PR #2 落地（互斥锁 + 进锁后重读复用，8 并发收敛为 1 次请求，反向验证过），但**本人要求列为待讨论点**，后续再一起过。涉及面：它是服务端救活护栏（1h/3 次）的客户端前提，两端是一套机制的两半（见 server-design.md 场景矩阵与 design.md 会话模型）；若讨论后改变客户端策略，服务端护栏参数可能要跟着重估。
+- ~~**单飞 refresh**~~ ✅ **2026-08-14 对齐完毕、讨论关闭**：机制通过（与 Auth0 CredentialsManager 同形，比 AppAuth 严、比 Supabase 保守），服务端护栏 1h/3 次的参数不用动。收尾两件已做（loginbase-kt `fix/singleflight-boundary`）：①「每进程一个实例」从隐式假设写成显式契约；②注入的 HttpClient 若没配超时，挂住的请求会永久持锁——按需补装 HttpTimeout 作保险丝。业界对照与「Ktor 内建单飞为何替代不了」记在 design.md 客户端节。
 
 ### 邮件语言与模板体系（2026-08-14 定案，待实施；原「邮件 locale」挂起项就此关闭）
 
