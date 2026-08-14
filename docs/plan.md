@@ -78,6 +78,25 @@
 | 5 | 打点就位（退役决策数据源） | C④ |
 | 6 | 回滚路径实测可用 | C⑤ |
 
+### D 层观察期读数（2026-08-14 首次三源交叉）
+
+结论：**双轨改造未伤及老版本用户，断言 3 在 D 层拿到数据支持**。
+
+| 源 | 读数 | 判读 |
+|---|---|---|
+| Workers Logs `track` 打点 | 08-13 logto 132 / loginbase 30；08-14（至 17:30 CST）logto 113 / loginbase 8；08-11~12 无打点 | 08-11/12 空白正是双轨 08-13 才上线，日志起点自洽。loginbase 那 38 次**全部是真机验证**——D1 `sessions` 全表 12 行 / 3 个 user_id（本人 + harlonwang-test + 一个纯邮箱新建号），创建时刻与打点时段逐一吻合。线上真实用户仍 100% 在 logto 轨道，与「新版未发布」一致 |
+| TrendingAI 客户端埋点（08-01 ~ 08-14 09:05 UTC） | 新代埋点版本（0.22+/1.x）日均：start 20.6→23.5、success 6.7→5.5、**error 4.2→0**、`auth_probe` ok 率 95.8%→**100%**；`session_expired_hint` 触发的登录无聚集（08-14 两次，同 08-04 水位）；配额类事件（`chat_quota_hit`/`pro_upsell_shown`）无跳变 | 老会话没被踢、配额键没漂移。**老版本（0.x）仍占 2675/3597 独立用户**，正是双轨要保的人群 |
+| Logto 审计日志（08-11 17:25 ~ 08-14 16:51 CST） | 授权码换 token 40 次全成功、0 失败；交互类 Error 全是正常分支（`user.user_not_exist` 16 / `user.identity_not_exist` 21 / `user.missing_profile` 22 / 验证码输错 4） | Logto 轨道错误率持平基线 |
+| email 哨兵 SQL | **94**（= 2026-08-13 回填后基线，未上升） | 上表「无洞」假设仍成立 |
+
+**读数口径备忘**（下次取数直接照做，别重踩）：
+
+1. **客户端埋点分两代**：`0.16~0.21` 只有 `sign_in_failed`，`0.22+` 才有 `sign_in_start / sign_in_error / auth_probe`。混算会得出「成功率 150%」这种鬼数，任何漏斗对比都必须先按世代分组。
+2. **`track` 打点在 Workers Logs 里是结构化字段，不是 message 文本**：`console.log(JSON.stringify({event,track}))` 被自动展开，`$metadata.message` 为空。查询要按 `$metadata.type = 'cf-worker'` 过滤再 `groupBy: track`；用 message includes `"track"` 过滤恒返回 0（曾据此误判「打点没生效」）。wrangler 的 OAuth scope 不含 observability，只能走 dashboard 同源的 `/api/v4/accounts/{acc}/workers/observability/telemetry/query`。
+3. **两侧日志都只保留 3 天**（Workers Logs 与 Logto 审计日志），双轨上线前的服务端基线已永久不可得。阶段 3 要看占比下行趋势，必须在 3 天窗口内定期取数或把打点导出，不能指望事后回溯。
+
+**顺带发现**（与双轨无关，已记入 design.md 单飞 refresh 节）：老版本 App 的 Logto refresh 交换失败率 17.4%，全为 `invalid_grant`，来自 16 个不同 IP 且密集成簇——并发刷新竞态的线上病例。
+
 ### 双轨生命周期（2026-08-12 对齐）
 
 地基是「同一账号，两种凭证」：无论 Logto token 还是 loginbase token，后端都解析到同一 `user_id`（email / `github_user_id` 双键映射）。两种 token 可结构化区分（HS256 vs RS256 + issuer），requireAuth 按 alg/issuer 路由而非盲试。

@@ -31,4 +31,4 @@
 - **生产真机验证过**：邮箱登录（命中原账号、重启恢复）、GitHub 登录（Pro 打通、`gh_token_enc` 落库）、升级横幅、回跳复用实例。**未验**：绑定 link 流程（需一个没绑 GitHub 的账号）。
 - **待讨论（挂起，见 plan.md 第 4 步「待讨论」）**：①单飞 refresh；③Android App Links（custom scheme 劫持的根治）；④**OAuth 回跳机制是否下沉到 loginbase-kt**（当前边界：库给 URL、消费方走完流程；决策取决于第 5 步是否接 Tono-Android）。
 - **邮件语言与模板体系**（原「邮件 locale」挂起项）：**`loginbase@1.3.0` 已发布**（2026-08-14，真包冒烟 14 条断言通过）——`locale`→`fallbackLocale` 正名（旧键直接删、不留兼容）、`templates` 改按语言分表 + 部件级、请求级 `locale`。客户端 `localeProvider` 已实现并合并（loginbase-kt PR #4），**未发 Maven**。**含配置 API 的 BREAKING 但不推 major**：受影响面实测为零（走 loginbase 的客户端尚未发布，`locale: 'zh'` 至今没渲染过生产邮件）。方案见 server-design.md「语言与模板体系」+ design.md 客户端节。消费方 github-ai-trending-api **已升级并部署生产**（PR #36：依赖钉死 1.3.0、删掉 `locale: 'zh'` 且**不配 `fallbackLocale`**、加 5 个把断言落在 Resend subject 上的测试）。**剩余**：发 TrendingAI PR #99（顺序 A：客户端首版即会上报语言，故不存在「不传 locale 的世代」）；**未做生产端到端验证**（要真发一封验证码邮件才能验语言）。
-- **观察项**：TrendingAI 双轨 track 占比、email 哨兵（基线 94 只应降）、Tono refresh 事件频率。
+- **观察项**：TrendingAI 双轨 track 占比、email 哨兵（基线 94 只应降）、Tono refresh 事件频率。**2026-08-14 首次三源取数完毕**（读数、口径备忘、日志只留 3 天的取数纪律见 plan.md「D 层观察期读数」）：线上真实用户仍 100% 走 logto 轨道（loginbase 侧全是真机验证），老版本登录与会话无回归，哨兵持平 94。
