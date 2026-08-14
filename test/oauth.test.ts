@@ -79,6 +79,55 @@ describe("GET /auth/oauth/github/start", () => {
     expect(await env.EMAIL_CODES.get(`oauth:state:${state}`)).not.toBeNull();
   });
 
+  // RFC 8252 §7.1 给 private-use scheme 的规范形态是「自有域名反写 + 单斜杠、不带 host」
+  // （`com.example.app:/oauth2redirect/...`）。消费方按这个形态配白名单时必须能通过——
+  // Android 侧不带 host 时 <data> 的 path 属性全被忽略、只能按 scheme 过滤，这个形态因此
+  // 成了移动端的推荐取值（见 TrendingAI androidApp/build.gradle.kts 的说明）。
+  it("无 host 的规范形态（scheme:/path）能过白名单，且 path 前缀扩展仍生效", async () => {
+    const login = createLogin<Cloudflare.Env>((e) => ({
+      db: e.DB,
+      kv: e.EMAIL_CODES,
+      jwt: { secret: e.JWT_SECRET },
+      email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+      socials: {
+        github: {
+          clientId: "id",
+          clientSecret: "secret",
+          allowedRedirects: ["cn.trendingai:/auth/callback"],
+        },
+      },
+      onVerified: () => ({ userId: "u" }),
+    }));
+
+    for (const redirect of [
+      "cn.trendingai:/auth/callback",
+      "cn.trendingai:/auth/callback/extra", // 前缀扩展
+    ]) {
+      const res = await login.app.request(
+        `/auth/oauth/github/start?redirect=${encodeURIComponent(redirect)}`,
+        { method: "GET" },
+        env
+      );
+      expect(res.status, redirect).toBe(302);
+    }
+
+    // 同 scheme 但 path 不在白名单下 → 拒绝（否则 debug/release 混用会互相接管）
+    const bad = await login.app.request(
+      "/auth/oauth/github/start?redirect=cn.trendingai%3A%2Felsewhere",
+      { method: "GET" },
+      env
+    );
+    expect(bad.status).toBe(400);
+
+    // 相近 scheme 不得互相命中：debug 变体是独立 scheme，不能被 release 白名单放行
+    const other = await login.app.request(
+      "/auth/oauth/github/start?redirect=cn.trendingai.debug%3A%2Fauth%2Fcallback",
+      { method: "GET" },
+      env
+    );
+    expect(other.status).toBe(400);
+  });
+
   it("缺 redirect / 不在白名单 → 400 invalid_redirect", async () => {
     for (const qs of ["", "?redirect=evil%3A%2F%2Fphish"]) {
       const res = await app.request(
