@@ -242,6 +242,16 @@ describe("配置告警", () => {
     expect(emailConfigWarnings(config)).toEqual([]);
   });
 
+  it("认不出的语言键报 invalid_locale_key（它是永不命中的死配置）", () => {
+    const config: EmailConfig = {
+      ...base,
+      templates: { "中文": { subject: (c) => c.code } },
+    };
+    expect(emailConfigWarnings(config)).toEqual([
+      { event: "email_template_config", status: "invalid_locale_key", key: "中文" },
+    ]);
+  });
+
   it("兜底语言不受支持时报 unsupported_fallback", () => {
     expect(emailConfigWarnings({ ...base, fallbackLocale: "ja" })).toEqual([
       {

@@ -168,6 +168,17 @@ export function emailConfigWarnings(
   config: EmailConfig
 ): Record<string, unknown>[] {
   const warnings: Record<string, unknown>[] = [];
+  // 归一化认不出的键（如 "中文"、"zh Hant"）会被索引直接丢掉——语法合法、
+  // 却永远不会被任何请求命中，是彻底的死配置，不报就只能靠用户投诉发现
+  for (const key of Object.keys(config.templates ?? {})) {
+    if (normalizeLocale(key) === null) {
+      warnings.push({
+        event: "email_template_config",
+        status: "invalid_locale_key",
+        key,
+      });
+    }
+  }
   for (const [locale, template] of customIndex(config)) {
     if (locale in BUILTIN) continue; // 内置能同语言补齐，部分覆盖合法
     const missing = PARTS.filter((p) => typeof template[p] !== "function");
