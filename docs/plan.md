@@ -233,7 +233,16 @@
 
   **决策取决于第 5 步**：Tono-Android 确定要接则下沉收益实打实；短期不接就是为假想的第二消费方付成本。
 
-- **Android App Links**（2026-08-13 记）：当前 OAuth 回跳用 custom scheme（`cn.trendingai://`），Android 对它**无所有权验证**——恶意 App 可抢注同名 scheme 劫持 `otc`（60s 内可换整对令牌）。Logto 时代同样如此（其控制台里 release/debug 两条 URI 一直都在），非本次引入。根治手段是 App Links（`https://` + `assetlinks.json` 签名校验），代价是要处理 debug 签名指纹与域名验证，属独立一块工作。RFC 8252 的偏好顺序也是 claimed HTTPS URI > private-use scheme。
+- **OAuth 回跳劫持（原「Android App Links」）**（2026-08-13 记；**2026-08-14 查证后优先级下调，方案不定，继续挂起**）：当前回跳用 custom scheme（release `cn.trendingai://whl.trending.ai/auth`、debug 同 scheme + `.debug` host），Android 对它**无所有权验证**。Logto 时代同样如此，非本次引入。
+
+  **2026-08-14 查证到的三件事**（下次捡起来时不必重查）：
+  1. 多个 App 匹配同一 URI 时，Android 弹**选择器**（不保证路由到目标 App），不是静默劫持——用户选错或曾勾过「始终使用」才中招；
+  2. **`POST /oauth/exchange` 的请求体只有 `{ otc }`，没有任何占有证明**（`src/plugins/github.ts`）——抢到 otc 即可在 60s 内换走整对令牌，**后果是账号接管**，不是信息泄露；
+  3. 现有的服务端 redirect 白名单（结构化匹配）防的是**开放重定向**，对设备上的 scheme 抢注无效——白名单里那个地址本来就合法。
+
+  **两条候选路线（都未定）**：①**PKCE 式绑定**——`start` 收 `code_challenge`、`exchange` 验 `code_verifier`，抢到 otc 也换不出令牌，把接管降级成「本次登录失败」；协议级、跨平台、跨消费方，成本约几十行 + 协议 minor。②**App Links**——`https://` + `assetlinks.json` 签名校验，系统直接路由；只覆盖 Android，且要处理 **Play App Signing 的证书指纹**（不是上传证书，经典坑）、debug 指纹、验证失败时链接落到浏览器需要真实兜底页、Android 12+ 验证更严。RFC 8252 是**两者都要**；若只做一件，①的收益面更广、成本更低。
+
+  **不阻塞发版**：触发要求「设备上装了专门抢注这个 scheme+host 的恶意 App」+「回跳时选错」，不是可规模化利用的路径。
 - ~~**单飞 refresh**~~ ✅ **2026-08-14 对齐完毕、讨论关闭**：机制通过（与 Auth0 CredentialsManager 同形，比 AppAuth 严、比 Supabase 保守），服务端护栏 1h/3 次的参数不用动。收尾两件已做（loginbase-kt `fix/singleflight-boundary`）：①「每进程一个实例」从隐式假设写成显式契约；②注入的 HttpClient 若没配超时，挂住的请求会永久持锁——按需补装 HttpTimeout 作保险丝。业界对照与「Ktor 内建单飞为何替代不了」记在 design.md 客户端节。
 
 ### 邮件语言与模板体系（2026-08-14 定案，待实施；原「邮件 locale」挂起项就此关闭）
