@@ -93,7 +93,7 @@
 
 1. **客户端埋点分两代**：`0.16~0.21` 只有 `sign_in_failed`，`0.22+` 才有 `sign_in_start / sign_in_error / auth_probe`。混算会得出「成功率 150%」这种鬼数，任何漏斗对比都必须先按世代分组。
 2. **`track` 打点在 Workers Logs 里是结构化字段，不是 message 文本**：`console.log(JSON.stringify({event,track}))` 被自动展开，`$metadata.message` 为空。查询要按 `$metadata.type = 'cf-worker'` 过滤再 `groupBy: track`；用 message includes `"track"` 过滤恒返回 0（曾据此误判「打点没生效」）。wrangler 的 OAuth scope 不含 observability，只能走 dashboard 同源的 `/api/v4/accounts/{acc}/workers/observability/telemetry/query`。
-3. **两侧日志都只保留 3 天**（Workers Logs 与 Logto 审计日志），双轨上线前的服务端基线已永久不可得。阶段 3 要看占比下行趋势，必须在 3 天窗口内定期取数或把打点导出，不能指望事后回溯。
+3. **两侧日志的保留期不同，都短**（2026-08-14 实测，非文档推断）：**Workers Logs 7 天**——14/30 天窗口与 7 天窗口返回的总量完全一致（29602）、最早桶都停在 08-07，即账号（Workers Paid $5）的保留上限；**Logto 审计日志 3 天**——不带时间参数拉全量只有 906 条、最早 08-11 17:25。双轨上线前的服务端基线已永久不可得，阶段 3 的占比下行趋势不能指望事后回溯。
 
 **顺带发现**（与双轨无关，已记入 design.md 单飞 refresh 节）：老版本 App 的 Logto refresh 交换失败率 17.4%，全为 `invalid_grant`，来自 16 个不同 IP 且密集成簇——并发刷新竞态的线上病例。
 
@@ -107,6 +107,11 @@
 | 2. 新版 App 发布（第 4 步后） | 新增登录/注册全走新轨 | 见下方「老版本仍会产生新用户」与迁移桥决策点 |
 | 3. 观察与收敛 | Logto 轨道占比下行 | requireAuth 打点 `track: loginbase\|logto`（第 3 步实现时即埋），退役决策唯一数据源 |
 | 4. 退役 | 删 fallback 与 logto-auth.js，注销 Logto 租户；**注销前必做 email 终扫**（见下方三点式策略③） | `app_users` 映射永久保留（已是正式数据） |
+
+**Paddle 接入引入的双轨代码（退役时需一并清理，2026-08-15 登记）**：
+
+1. `src/lib/quota.js`：`auth.track === 'loginbase' ? auth.userId : null`（Paddle 判权键）。退役时塌缩成 `auth.userId`；双轨期不能提前删——Logto 轨 `auth.userId` 是 undefined，直传会 D1 绑定报错打挂现网 chat
+2. `src/api/billing.js`：`userIdForAuth` 只认 loginbase 轨。退役时可简化为直取 `auth.userId`，非硬项
 
 **老版本仍会产生新用户（阶段 2 的精确表述）**：老版本的注册入口是 Logto 托管的，Logto 侧账号可能继续新增——但来源池封闭且萎缩（应用商店只分发新版，能在老版注册的仅限「装了老版未登录」的存量装机）。总流量趋势下行，但不单调、不为零。**设计对此的免疫就是持续映射**（任务 5）：晚到的 Logto 用户升级后按 email / `github_user_id` 收敛到同一 `user_id`，无需补丁快照。
 
