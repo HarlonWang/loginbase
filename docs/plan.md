@@ -113,6 +113,23 @@
 1. `src/lib/quota.js`：`auth.track === 'loginbase' ? auth.userId : null`（Paddle 判权键）。退役时塌缩成 `auth.userId`；双轨期不能提前删——Logto 轨 `auth.userId` 是 undefined，直传会 D1 绑定报错打挂现网 chat
 2. `src/api/billing.js`：`userIdForAuth` 只认 loginbase 轨。退役时可简化为直取 `auth.userId`，非硬项
 
+**`auth.` 域名：已评估，决定不切（2026-08-16 定案）**：loginbase 挂在 `api.trendingai.cn/auth`，OAuth callback 是 `https://api.trendingai.cn/auth/oauth/github/callback`，**维持现状，Logto 退役后也不迁到 `auth.`**。`auth.trendingai.cn`（现 CNAME 指向 `domains.logto.app`）在注销租户时直接删掉 DNS 记录，不再找用途。
+
+起因是 callback 会在 OAuth 回跳时短暂出现在浏览器地址栏，`api.` 读着不如 `auth.` 贴切。评估后结论相反——**现状本就通顺**（「api 域名下的 auth 模块的 github callback」，`api` 与 `auth` 不重复），而 `auth.trendingai.cn/auth/oauth/...` 的重复反倒是切域名**引入**的新问题。
+
+**决定性的理由是：任何对外形态的变更都必然留下兼容分支**，因为已发布的 APK 把域名与路径都写死了。四个方案挨个走到头，分支只是换了个地方待着：
+
+| 方案 | 分支落在哪 | 附带成本 |
+|---|---|---|
+| 切 `auth.`，`api.` 并存 | GitHub OAuth App 的 callback 只能配一个 → 必须显式 `socials.github.callbackUrl` 钉死，与 start 的 origin 解耦 | 三方同步（入口 ↔ 配置 ↔ GitHub 后台）；切换瞬间有秒级窗口 |
+| `auth.` 子域根挂载（去掉重复的 `/auth`） | Worker 入口按 hostname 分支 + 路径改写 | 域名硬编码进代码；显式 `callbackUrl` 从过渡措施升级为永久必需 |
+| callback 加对外别名 `/oauth/github/callback` | Worker 入口按 path 精确匹配 + 改写 | 同上，且别名与真路由要长期对账 |
+| loginbase 整体根挂载（`basePath: ''`） | 入口要维护「哪些顶层前缀属于登录底座」清单 | `/code/*` `/refresh` `/sessions` 挂到主域名根上，与 `/api/*` 并列，语义更乱 |
+
+**不切则整串连锁全部消失**：不需要入口改写或 hostname 判断；不需要显式 `callbackUrl`（单域名单形态，`gh.callbackUrl ?? 按 origin 推导` 的默认分支永远正确）；不需要三方同步；不需要挑低峰改 GitHub 后台。收益侧只是一个 302 中转、地址栏闪现不到一秒的观感——不值得。
+
+顺带记一条不再需要、但值得留档的认知：**`api.` 将来不会重演 `auth.` 今天的困局**。`auth.` 卡死是因为 CNAME 指向第三方（`domains.logto.app`），一个 CNAME 只能指一处，Logto 与自己无法并存；而 `api.` 是自家 Worker 的 custom domain，即便将来真要加域名也可并存，老 APK 照常工作。**这两件事性质不同，别把 Logto 的教训套到 `api.` 上重复评估。**
+
 **老版本仍会产生新用户（阶段 2 的精确表述）**：老版本的注册入口是 Logto 托管的，Logto 侧账号可能继续新增——但来源池封闭且萎缩（应用商店只分发新版，能在老版注册的仅限「装了老版未登录」的存量装机）。总流量趋势下行，但不单调、不为零。**设计对此的免疫就是持续映射**（任务 5）：晚到的 Logto 用户升级后按 email / `github_user_id` 收敛到同一 `user_id`，无需补丁快照。
 
 ### email 回填与三点式导出策略（2026-08-13 对齐）
