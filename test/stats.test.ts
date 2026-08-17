@@ -32,6 +32,11 @@ interface EventRow {
   flow_id: string | null;
   is_new_user: number | null;
   country: string | null;
+  asn: number | null;
+  colo: string | null;
+  timezone: string | null;
+  city: string | null;
+  region: string | null;
   source: string;
   meta: string | null;
 }
@@ -114,7 +119,54 @@ describe("邮箱验证码链路", () => {
     expect(login.user_id).toBe("u-stats");
     expect(login.is_new_user).toBe(1);
     expect(login.source).toBe("server");
-    expect(login.country).toBe("unknown"); // 测试请求没有 cf 字段
+    // 测试请求没有 cf：country 兜底成 unknown，其余地理字段一律 null
+    expect(login.country).toBe("unknown");
+    expect([login.asn, login.colo, login.timezone, login.city, login.region]).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it("cf 存在时六个地理字段全部落库", async () => {
+    const { app } = makeLogin();
+    await storeCode(env.EMAIL_CODES, "geo@example.com", "123456");
+    const req = new Request("http://local/auth/code/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "geo@example.com", code: "123456" }),
+      // Cloudflare 边缘在请求到达 Worker 前填好的字段，这里模拟之
+      cf: {
+        country: "CN",
+        asn: 4134,
+        colo: "HKG",
+        timezone: "Asia/Shanghai",
+        city: "Hangzhou",
+        region: "Zhejiang",
+      },
+    } as RequestInit);
+
+    expect((await app.fetch(req, env)).status).toBe(200);
+    await flushStats();
+
+    const login = (await rows()).find((r) => r.event === "login")!;
+    expect({
+      country: login.country,
+      asn: login.asn,
+      colo: login.colo,
+      timezone: login.timezone,
+      city: login.city,
+      region: login.region,
+    }).toEqual({
+      country: "CN",
+      asn: 4134,
+      colo: "HKG",
+      timezone: "Asia/Shanghai",
+      city: "Hangzhou",
+      region: "Zhejiang",
+    });
   });
 
   it("三个失败分支各记各的 outcome", async () => {

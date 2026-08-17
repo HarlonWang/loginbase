@@ -38,12 +38,44 @@ export interface TrackContext {
   executionCtx?: ExecutionContext;
 }
 
-function countryOf(c: TrackContext): string {
+interface Geo {
+  country: string;
+  asn: number | null;
+  colo: string | null;
+  timezone: string | null;
+  city: string | null;
+  region: string | null;
+}
+
+const GEO_ABSENT: Geo = {
+  country: "unknown",
+  asn: null,
+  colo: null,
+  timezone: null,
+  city: null,
+  region: null,
+};
+
+/**
+ * 全部取自 Cloudflare 边缘的 `request.cf`——它在请求到达 Worker 前就已填好，
+ * 零外部依赖、无额外请求。本地 wrangler dev 与测试环境没有 cf，故整体兜底。
+ * 注意这是 **IP 归属地**，不是用户声明的位置：代理会显示出口所在地。
+ */
+function geoOf(c: TrackContext): Geo {
   try {
-    const country = (c.req.raw as { cf?: { country?: string } }).cf?.country;
-    return country ?? "unknown";
+    const cf = (c.req.raw as { cf?: Partial<Record<keyof Geo, unknown>> }).cf;
+    if (!cf) return GEO_ABSENT;
+    const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+    return {
+      country: str(cf.country) ?? "unknown",
+      asn: typeof cf.asn === "number" ? cf.asn : null,
+      colo: str(cf.colo),
+      timezone: str(cf.timezone),
+      city: str(cf.city),
+      region: str(cf.region),
+    };
   } catch {
-    return "unknown";
+    return GEO_ABSENT;
   }
 }
 
@@ -60,14 +92,15 @@ function defer(c: TrackContext, p: Promise<unknown>): void {
 async function writeEvent(
   db: D1Database,
   e: StatEvent,
-  country: string,
+  geo: Geo,
   now: number
 ): Promise<void> {
   await db
     .prepare(
       `INSERT INTO auth_events
-         (at, event, outcome, provider, user_id, flow_id, is_new_user, country, source, meta)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'server', ?)`
+         (at, event, outcome, provider, user_id, flow_id, is_new_user,
+          country, asn, colo, timezone, city, region, source, meta)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', ?)`
     )
     .bind(
       now,
@@ -77,7 +110,12 @@ async function writeEvent(
       e.userId ?? null,
       e.flowId ?? null,
       e.isNewUser === undefined ? null : e.isNewUser ? 1 : 0,
-      country,
+      geo.country,
+      geo.asn,
+      geo.colo,
+      geo.timezone,
+      geo.city,
+      geo.region,
       e.meta ? JSON.stringify(e.meta) : null
     )
     .run();
@@ -107,7 +145,7 @@ export function createTracker<TEnv>(getConfig: (env: TEnv) => LoginConfig) {
 
     defer(
       c,
-      writeEvent(cfg.db, e, countryOf(c), Date.now()).catch((err: unknown) =>
+      writeEvent(cfg.db, e, geoOf(c), Date.now()).catch((err: unknown) =>
         warnUnavailableOnce(cfg, onEvent, err)
       )
     );

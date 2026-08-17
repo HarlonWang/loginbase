@@ -10,7 +10,14 @@ CREATE TABLE IF NOT EXISTS auth_events (
   user_id     TEXT,
   flow_id     TEXT,                           -- 串联 OAuth 三段，非凭证
   is_new_user INTEGER,                        -- 0 | 1 | NULL
-  country     TEXT,                           -- request.cf.country，缺失落 'unknown'
+  -- 地理字段：全部取自 Cloudflare 边缘的 request.cf，零外部依赖、无额外请求。
+  -- 是 IP 归属地而非用户声明位置，代理会显示出口所在地（见 stats-design.md K 组坑①）。
+  country     TEXT,                           -- ISO 3166-1 两位码，缺失落 'unknown'
+  asn         INTEGER,                        -- 自治域号，识别家宽 vs 云出口（K9）
+  colo        TEXT,                           -- Cloudflare 边缘节点码；与 country 不一致 = 流量绕道
+  timezone    TEXT,                           -- IANA 时区名
+  city        TEXT,                           -- 常为空；当前无指标使用（见 6.11）
+  region      TEXT,                           -- 同上
   source      TEXT NOT NULL DEFAULT 'server', -- server | client（client 留给二期）
   meta        TEXT                            -- JSON：familyId、locale、错误串等低频字段
 );
