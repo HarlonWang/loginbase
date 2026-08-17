@@ -39,11 +39,20 @@ interface StateRecord {
   flowId?: string;
 }
 
+/** 兑换后**返回给客户端**的载荷——形态即协议，加字段等于改协议 */
 interface OtcPayload {
   accessToken: string;
   refreshToken: string;
   isNewUser?: boolean;
   user?: unknown;
+}
+
+/**
+ * **存进 KV** 的载荷 = 协议载荷 + 只供服务端统计的字段。
+ * 两个类型分开是为了让「统计字段必须在兑换时剥离」由类型表达，而不只靠一条测试——
+ * 谁往这里加字段而忘了解构，泄的就是响应体。
+ */
+interface OtcStoredPayload extends OtcPayload {
   /** 登录成功事件要记「谁登录了」，而 exchange 端点本身无从得知，故随载荷带下来 */
   userId?: string;
   flowId?: string;
@@ -370,7 +379,7 @@ export function registerGithubOauth<TEnv>(
     );
 
     const otc = randomToken();
-    const payload: OtcPayload = {
+    const payload: OtcStoredPayload = {
       accessToken,
       refreshToken,
       ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
@@ -416,7 +425,8 @@ export function registerGithubOauth<TEnv>(
     }
     await cfg(c).kv.delete(key); // 单次使用，兑换即焚
 
-    const { userId, flowId, ...payload } = JSON.parse(raw) as OtcPayload;
+    // 解构即剥离：payload 的类型收窄回 OtcPayload，统计字段进不了响应体
+    const { userId, flowId, ...payload } = JSON.parse(raw) as OtcStoredPayload;
     const trace = {
       ...(userId ? { userId } : {}),
       ...(flowId ? { flowId } : {}),

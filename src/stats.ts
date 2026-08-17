@@ -107,16 +107,24 @@ export function createTracker<TEnv>(getConfig: (env: TEnv) => LoginConfig) {
 
     defer(
       c,
-      writeEvent(cfg.db, e, countryOf(c), Date.now()).catch((err: unknown) => {
-        // 最可能的原因是没执行 migration 0002。只告警一次，避免每请求刷屏。
-        if (warnedConfigs.has(cfg)) return;
-        warnedConfigs.add(cfg);
-        onEvent({
-          event: "stats_unavailable",
-          hint: "auth_events 写入失败，请执行 migration 0002；登录不受影响",
-          message: String(err),
-        });
-      })
+      writeEvent(cfg.db, e, countryOf(c), Date.now()).catch((err: unknown) =>
+        warnUnavailableOnce(cfg, onEvent, err)
+      )
     );
   };
+}
+
+/** 最可能的原因是没执行 migration 0002。只告警一次，避免每请求刷屏。 */
+function warnUnavailableOnce(
+  cfg: LoginConfig,
+  onEvent: (event: Record<string, unknown>) => void,
+  err: unknown
+): void {
+  if (warnedConfigs.has(cfg)) return;
+  warnedConfigs.add(cfg);
+  onEvent({
+    event: "stats_unavailable",
+    hint: "auth_events 写入失败，请执行 migration 0002；登录不受影响",
+    message: String(err),
+  });
 }
