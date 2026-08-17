@@ -17,6 +17,7 @@
 loginbase/                   # 本仓：TS 服务端库 + 协议契约
 ├── src/                     # TS 服务端库（Hono sub-app 工厂），从 Tono-Server 平移
 ├── test/                    # vitest
+├── queries/                 # 登录统计取数 SQL（人肉执行；口径见 docs/stats-design.md）
 ├── docs/
 │   ├── design.md            # 路线与仓库设计决策
 │   ├── server-design.md     # 服务端技术方案（公共 API/协议草案/会话模型/平移策略）
