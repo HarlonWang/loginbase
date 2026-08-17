@@ -64,6 +64,9 @@ export function createAuthApp<TEnv>(
     const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
     const rl = await checkSendRateLimit(cfg(c).kv, raw, ip);
     if (!rl.allowed) {
+      // 命中限流不只是滥用信号，更是「用户发不出码」的体验问题——分层记录才知道
+      // 是自己手快（cooldown）还是真被挡住（email / ip 窗口）
+      track(c, { event: "rate_limited", outcome: rl.layer, meta: { endpoint: "code_send" } });
       return c.json(
         { error: "too_many_requests", retryAfterSeconds: rl.retryAfterSeconds },
         429
@@ -300,12 +303,15 @@ export function createAuthApp<TEnv>(
     const sessionId = c.get("sessionId");
     if (!sessionId) return c.json({ error: "unauthorized" }, 401);
     await revokeSession(cfg(c).db, sessionId);
+    // 主动登出与「被轮换而作废」在 sessions 表里长得很像，只有事件能干净区分
+    track(c, { event: "session_revoked", outcome: "current", userId: c.get("userId") });
     return c.body(null, 204);
   });
 
   auth.delete("/sessions/all", authMiddleware, async (c) => {
     const userId = c.get("userId");
     await revokeAllForUser(cfg(c).db, userId);
+    track(c, { event: "session_revoked", outcome: "all", userId });
     return c.body(null, 204);
   });
 

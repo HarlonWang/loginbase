@@ -7,6 +7,11 @@ const IP_MAX_IN_WINDOW = 10;
 export interface RateLimitResult {
   allowed: boolean;
   retryAfterSeconds: number;
+  /**
+   * 被哪一层挡下（1.4.0 起，统计用）；allowed 时缺省。
+   * 显式给出而非由 retryAfterSeconds 反推——那三个值改一次，反推就错一次。
+   */
+  layer?: "cooldown" | "email" | "ip";
 }
 
 export async function checkSendRateLimit(
@@ -16,15 +21,15 @@ export async function checkSendRateLimit(
 ): Promise<RateLimitResult> {
   const cooldown = await kv.get(`cooldown:${email}`);
   if (cooldown) {
-    return { allowed: false, retryAfterSeconds: COOLDOWN_SECONDS };
+    return { allowed: false, retryAfterSeconds: COOLDOWN_SECONDS, layer: "cooldown" };
   }
   const emailCount = parseInt((await kv.get(`rl:email:${email}`)) ?? "0", 10);
   if (emailCount >= EMAIL_MAX_IN_WINDOW) {
-    return { allowed: false, retryAfterSeconds: EMAIL_WINDOW_SECONDS };
+    return { allowed: false, retryAfterSeconds: EMAIL_WINDOW_SECONDS, layer: "email" };
   }
   const ipCount = parseInt((await kv.get(`rl:ip:${ip}`)) ?? "0", 10);
   if (ipCount >= IP_MAX_IN_WINDOW) {
-    return { allowed: false, retryAfterSeconds: IP_WINDOW_SECONDS };
+    return { allowed: false, retryAfterSeconds: IP_WINDOW_SECONDS, layer: "ip" };
   }
   return { allowed: true, retryAfterSeconds: 0 };
 }

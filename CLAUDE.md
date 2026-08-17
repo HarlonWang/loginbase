@@ -24,7 +24,7 @@
 
 **第 0~3 步已完成**；**第 4 步接近完成，只剩发版**（2026-08-14）。
 
-- **服务端**：`loginbase@1.2.0` 已发布（link 语义 + providerAccessToken/verifiedEmails 透传 + scope 可配）。**登录统计 1.4.0 已实现待发**（`feat/stats`）：`auth_events` 表 + 8 类事件 + `flow_id` 串 OAuth 三段，**默认开启**且失败不影响登录；指标口径与分层决策全在 `docs/stats-design.md`（讨论按 L1 边界→L2 指标→L3 数据模型分层定稿，连带问题进待议清单）。**消费方升级须执行 migration 0002**，否则统计静默不落库。
+- **服务端**：`loginbase@1.2.0` 已发布（link 语义 + providerAccessToken/verifiedEmails 透传 + scope 可配）。**登录统计 1.4.0 已实现待发**（`feat/stats`）：`auth_events` 表 + 10 类事件 + `flow_id` 串 OAuth 三段，**默认开启**且失败不影响登录；指标口径与分层决策全在 `docs/stats-design.md`（讨论按 L1 边界→L2 指标→L3 数据模型分层定稿，连带问题进待议清单）。**消费方升级须执行 migration 0002**，否则统计静默不落库。
 - **客户端库**：`HarlonWang/loginbase-kt` 已建仓，核心实现完成（AuthClient / TokenStore 双平台 / AuthState / 单飞 refresh，25 测试），**未发 Maven**——TrendingAI 目前经 composite build 吃本地源码（`local.properties` 配 `loginbase-kt.dir`，是必需配置）。四个 Maven Central secrets 未配。
 - **后端消费方**（github-ai-trending-api，已部署生产）：GitHub token 加密保管（migration 039 + `GH_TOKEN_KEY`，密钥存档 `HarlonWang/secrets` 的 `trendingai-api/`）、`onLinked` 绑定、`GET/DELETE /api/github/token`、OAuth 白名单改用 wrangler vars、scope 补 `public_repo`。PR #32/33/34/35。
 - **客户端消费方**（TrendingAI）：**PR #99 待审**（`feat/loginbase-auth`，9 commits）。已完成登录面板（邮箱原生两屏 + GitHub）、OAuth 回跳（透明中转 Activity）、token 取回换自家端点、绑定改走 link 流程、业务请求 401 重试、C 方案升级横幅。

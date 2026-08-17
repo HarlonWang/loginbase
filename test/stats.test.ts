@@ -212,6 +212,54 @@ describe("邮箱验证码链路", () => {
   });
 });
 
+describe("限流与主动登出", () => {
+  it("限流命中按层记录（cooldown / email / ip）", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockResolvedValue(new Response("{}", { status: 200 }));
+    const { app } = makeLogin();
+    const send = (email: string) =>
+      app.request(
+        "/auth/code/send",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        },
+        env
+      );
+
+    await send("rl@example.com"); // 首次通过，写下 60s cooldown
+    const blocked = await send("rl@example.com");
+    expect(blocked.status).toBe(429);
+    await flushStats();
+
+    const limited = (await rows()).filter((r) => r.event === "rate_limited");
+    expect(limited).toHaveLength(1);
+    expect(limited[0].outcome).toBe("cooldown"); // 分层可辨，不靠 retryAfterSeconds 反推
+    expect(JSON.parse(String(limited[0].meta)).endpoint).toBe("code_send");
+    fetchSpy.mockRestore();
+  });
+
+  it("主动登出记 session_revoked，current 与 all 分开", async () => {
+    const { app } = makeLogin();
+    const user = await createTestUser("logout@example.com");
+    const headers = {
+      Authorization: `Bearer ${user.accessToken}`,
+      "Content-Type": "application/json",
+    };
+
+    expect((await app.request("/auth/sessions", { method: "DELETE", headers }, env)).status).toBe(204);
+    expect(
+      (await app.request("/auth/sessions/all", { method: "DELETE", headers }, env)).status
+    ).toBe(204);
+    await flushStats();
+
+    const revoked = (await rows()).filter((r) => r.event === "session_revoked");
+    expect(revoked.map((r) => r.outcome)).toEqual(["current", "all"]);
+    expect(revoked[0].user_id).toBe(user.userId);
+  });
+});
+
 describe("OAuth 漏斗", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 

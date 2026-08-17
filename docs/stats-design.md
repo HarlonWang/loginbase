@@ -225,7 +225,7 @@
 
 **反推规则**：只为 10 条核心指标设计。每个字段都要能指名道姓地说出它服务哪条核心；说不出的，一律推到 L4 或砍掉。
 
-### 1. 事件清单（8 个）
+### 1. 事件清单（10 个）
 
 | 事件 | outcome 取值 | 关键字段 | 服务的核心指标 | 现状 |
 |---|---|---|---|---|
@@ -237,6 +237,8 @@
 | `oauth_callback` | `issued` / `linked` / `invalid_state` / `oauth_failed` / `no_email` / `link_conflict` / `internal` | flow_id、mode | D4 分子、**D11** 被减数 | 新增 |
 | `oauth_exchange` | `ok` / `invalid_otc` | flow_id、user_id | **D11** 减数 | 新增 |
 | `refresh` | `ok` / `rescued` / `reuse_revoked` / `guardrail_revoked` / `invalid` | user_id、family_id | **F2** | 已有三个异常 outcome，**缺 `ok`**（F2 至今没有分母） |
+| `rate_limited` | `cooldown` / `email` / `ip` | endpoint | H1 | 新增（2026-08-17 追加，见 6.10） |
+| `session_revoked` | `current` / `all` | user_id | F8 | 新增（同上） |
 
 要点：
 
@@ -309,7 +311,7 @@ CREATE TABLE IF NOT EXISTS user_first_seen (
 
 ### 6. v1 实现方案（档 A「建地基」，定 2026-08-17）
 
-> **状态：已实现**（`feat/stats` 分支，版本 1.4.0，测试 117 → 129 全绿）。下方内容即端态描述。
+> **状态：已实现**（`feat/stats` 分支，版本 1.4.0，测试 117 → 131 全绿）。下方内容即端态描述。
 
 投入产出比的取舍基于一个不对称：**地基是固定成本，事件是边际成本**。建表、写入通道、migration、开关是一次性投入；每个事件只是在已有分支里加一行 emit。既然地基要建，省事件省不下多少工，却会让指标缺一大块——而**代码可以迭代，数据不能补录**。今天不埋的点，下一版想看时只有从下一版开始的数据。
 
@@ -319,7 +321,7 @@ CREATE TABLE IF NOT EXISTS user_first_seen (
 |---|---|
 | `auth_events` 表 + migration 0002 | `user_first_seen` 表——v1 不启用保留期清理，K3 从事件表现算就是准的；将来设保留期时再建并回填 |
 | 写入通道（约 60 行新文件） | `ip` / `ua` 列——核心一条都不要求，隐私尺度未定；登录成功那些请求的 ip 本就在 `sessions` 表里 |
-| 7 个服务端事件的 emit 点 | `email.ts` 抛结构化错误——降级为把错误串塞进 `meta`，Resend 的 status 本就在串里 |
+| 10 个服务端事件的 emit 点 | `email.ts` 抛结构化错误——降级为把错误串塞进 `meta`，Resend 的 status 本就在串里 |
 | `flow_id` 串联 | 保留期与 purge、客户端上报、查询 API、看板 |
 | otc 载荷补 `userId` / `flowId` | |
 
@@ -377,6 +379,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_events_flow     ON auth_events(flow_id);
 | `oauth_callback` | `issued` / `linked` / `invalid_state` / `oauth_failed` / `no_email` / `link_conflict` / `internal` | callback 全部返回分支 | D4 分子、**D11** |
 | `oauth_exchange` | `ok` / `invalid_otc` | `/oauth/exchange` 两个分支 | **D11** |
 | `refresh` | `ok` / `rescued` / `reuse_revoked` / `guardrail_revoked` / `invalid` | `/refresh`；`ok` 是**新增的成功路径** | **F2** |
+| `rate_limited` | `cooldown` / `email` / `ip` | `/code/send` 的 429 分支 | H1 |
+| `session_revoked` | `current` / `all` | `DELETE /sessions` 与 `/sessions/all` | F8 |
 
 #### 6.5 与 onEvent 的兼容性（硬约束）
 
@@ -391,8 +395,9 @@ CREATE INDEX IF NOT EXISTS idx_auth_events_flow     ON auth_events(flow_id);
 | `src/stats.ts` | 新增：表写入 + fail-safe + once 告警 |
 | `migrations/0002_auth_events.sql` | 新增（`migrations` 已在 package.json 的 `files` 里，随包分发） |
 | `src/config.ts` | 加 `stats` 配置 |
-| `src/handler.ts` | 4 处 emit（send 失败、verify 四分支、login、refresh ok） |
-| `src/plugins/github.ts` | 3 处 emit + `flow_id` 生成与透传（state 记录、otc 载荷各加字段） |
+| `src/handler.ts` | emit：send 失败、verify 四分支、login、refresh 五分支、限流命中、两个撤销端点 |
+| `src/plugins/github.ts` | emit：start / callback 各分支 / exchange + `flow_id` 生成与透传（state 记录、otc 载荷各加字段） |
+| `src/rate_limit.ts` | `RateLimitResult` 加可选 `layer`（见 6.10） |
 | `test/stats.test.ts` | 新增 |
 
 #### 6.7 测试要点
@@ -413,6 +418,21 @@ CREATE INDEX IF NOT EXISTS idx_auth_events_flow     ON auth_events(flow_id);
 #### 6.9 验收：核心 10 条的取数来源
 
 A2/A3/B1 ← `login` 事件；K3 ← `login` 事件按 user_id 取最早一条的 country；C2 ← `code_sent` 与 `code_verify(ok)`；C3 ← `code_verify` 各失败 outcome；D4 ← `oauth_start` 与 `oauth_callback`；D11 ← `oauth_callback(issued)` 与 `oauth_exchange(ok)` 按 flow_id 配对；F2 ← `refresh` 的 `rescued` / `ok`；G1 ← `code_send_failed`。
+
+#### 6.10 两个备选指标的追加（2026-08-17）
+
+H1、F8 原本按「核心清单当裁判」的纪律不做，上线覆盖度盘点后追加。理由是各自只需一行 emit，且：
+
+- **H1 的价值被低估了**——命中限流不只是滥用哨兵，更是**「用户发不出码」的体验问题**，而这件事此前完全不可见。分层（`cooldown` / `email` / `ip`）才分得清是用户自己手快，还是真被窗口挡住。为此给 `RateLimitResult` 加了可选的 `layer` 字段：**显式给出而非由 `retryAfterSeconds` 反推**——那三个秒数改一次，反推就错一次。该类型经 `index.ts` 导出，加可选字段是 minor、非 breaking。
+- **F8** 的主动登出与「被轮换而作废」在 `sessions` 表里长得很像（都是 `revoked_at` 非空），只有事件能干净区分。
+
+#### 6.11 上线后的指标覆盖（2026-08-17 盘点）
+
+69 条里约 **54 条**可得（上线前约 12 条），**核心 10 条全覆盖**。分组：A 8/8、B 4/4、C 4.5/8、D 14/19、E 3/3、F 8.5/9、G 1.5/4、H 3/5、K 8/9。
+
+- **意外收获 D13**（回跳耗时 p50/p90/max）：设计时没算进这一版，但 `flow_id` + `at` 一凑就出来了。它比 D12 更早预警——耗时逼近 60 秒就能看见，不必等真的开始失败。
+- **仍拿不到的，原因归三类**：需按邮箱串联的（C4/C6/G3/H3/H4）因为 v1 砍了 `email_hash`；`[客]` 指标（C8/D15~D19/F9）等二期；`asn`（K9）、发信延迟（G2）未采集。
+- G4 模板配置告警走 `onEvent` 而不落表，仍只在日志里（7 天）。
 
 ### 7. 一期不需要任何客户端改动
 
