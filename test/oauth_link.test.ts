@@ -110,6 +110,8 @@ describe("POST /auth/oauth/github/link/start", () => {
       redirect: REDIRECT,
       mode: "link",
       userId: "u-42",
+      // 1.4.0 起随载荷带上统计用的流程标识（见 docs/stats-design.md）
+      flowId: expect.any(String),
     });
   });
 

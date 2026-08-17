@@ -146,6 +146,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_rescued   ON sessions(family_id, rescued
 
 users 表**不归库**——库对 `user_id` 只存不读，用户表结构、建号、试用赠送全在 `onVerified` 里由 App 完成。
 
+**`auth_events` 表也归库所有**（1.4.0 起，登录统计；DDL 见 `migrations/0002_auth_events.sql`，指标与口径见 [stats-design.md](stats-design.md)）：单表存 10 类事件（`code_sent` / `code_send_failed` / `code_verify` / `login` / `rate_limited` / `oauth_start` / `oauth_callback` / `oauth_exchange` / `refresh` / `session_revoked`），列为 `at / event / outcome / provider / user_id / flow_id / is_new_user / country / asn / colo / timezone / city / region / source / meta`（地理六项全部取自 `request.cf`，零外部依赖）。三点值得单记：
+
+- **统计模块默认开启**，但绝不能成为登录的故障源——写入异常一律吞掉、`waitUntil` 异步写、首次失败只告警一次（`stats_unavailable`，提示执行 migration 0002）。**升级到 1.4.0 后未跑迁移，登录照常工作，只是统计静默不落库。**
+- `flow_id` 串联 OAuth 的 start → callback → exchange 三段，**与 state / otc 是两回事**：那两个是单次凭证，绝不写进长期保存的表。它的存在使「服务端签发了 otc 但客户端从未兑换」（回跳丢失）能精确配对，而不是两个计数相减。
+- v1 **不存 `ip` / `ua`**（核心指标一条都不要求），`onEvent` 那一侧的字段形态则与 1.3.0 完全一致（`refresh` 仍带 `familyId` / `ip`）——统计写入与 `onEvent` 是并行的两条路，钩子不被库劫持去写库表。
+
 **KV 键位**（全部自带 TTL，无需清理）：
 
 | 键 | 值 | TTL |

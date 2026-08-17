@@ -7,6 +7,7 @@ import { trimmedField } from "../body.js";
 import { createAuthMiddleware, type AuthVariables } from "../middleware.js";
 import { generateRefreshToken as randomToken } from "../session.js";
 import { createSession } from "../session.js";
+import { createTracker } from "../stats.js";
 import { signAccessToken, ACCESS_TTL_SECONDS } from "../token.js";
 
 const GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize";
@@ -30,13 +31,31 @@ interface StateRecord {
   mode?: "link";
   /** mode==="link" 时的当前用户（来自 link/start 的 Bearer 校验） */
   userId?: string;
+  /**
+   * 统计用的流程标识（docs/stats-design.md）：串联 start → callback → exchange，
+   * 使「服务端签发了但客户端从未兑换」（回跳丢失）能精确配对而非两个计数相减。
+   * **与 state / otc 是两回事**——那两个是单次凭证，绝不能写进长期保存的统计表。
+   */
+  flowId?: string;
 }
 
+/** 兑换后**返回给客户端**的载荷——形态即协议，加字段等于改协议 */
 interface OtcPayload {
   accessToken: string;
   refreshToken: string;
   isNewUser?: boolean;
   user?: unknown;
+}
+
+/**
+ * **存进 KV** 的载荷 = 协议载荷 + 只供服务端统计的字段。
+ * 两个类型分开是为了让「统计字段必须在兑换时剥离」由类型表达，而不只靠一条测试——
+ * 谁往这里加字段而忘了解构，泄的就是响应体。
+ */
+interface OtcStoredPayload extends OtcPayload {
+  /** 登录成功事件要记「谁登录了」，而 exchange 端点本身无从得知，故随载荷带下来 */
+  userId?: string;
+  flowId?: string;
 }
 
 // 结构化校验而非字符串前缀：startsWith("https://example.com") 会被
@@ -180,6 +199,7 @@ export function registerGithubOauth<TEnv>(
   const cfg = (c: { env: unknown }) => getConfig(c.env as TEnv);
   const github = (c: { env: unknown }) => cfg(c).socials?.github;
   const authMiddleware = createAuthMiddleware(getConfig);
+  const track = createTracker(getConfig);
   const callbackUrlFor = (c: { env: unknown; req: { url: string } }, gh: GithubSocialConfig) =>
     gh.callbackUrl ??
     `${new URL(c.req.url).origin}${basePath}/oauth/github/callback`;
@@ -190,15 +210,22 @@ export function registerGithubOauth<TEnv>(
 
     const redirect = c.req.query("redirect") ?? "";
     if (!redirect || !redirectAllowed(redirect, gh)) {
+      track(c, {
+        event: "oauth_start",
+        outcome: "invalid_redirect",
+        provider: "github",
+      });
       return c.json({ error: "invalid_redirect" }, 400);
     }
 
     const state = randomToken();
-    const record: StateRecord = { redirect };
+    const flowId = crypto.randomUUID();
+    const record: StateRecord = { redirect, flowId };
     await cfg(c).kv.put(`oauth:state:${state}`, JSON.stringify(record), {
       expirationTtl: STATE_TTL_SECONDS,
     });
 
+    track(c, { event: "oauth_start", outcome: "ok", provider: "github", flowId });
     return c.redirect(buildAuthorizeUrl(gh, callbackUrlFor(c, gh), state), 302);
   });
 
@@ -214,15 +241,35 @@ export function registerGithubOauth<TEnv>(
       .catch(() => ({}) as { redirect?: string });
     const redirect = trimmedField(body.redirect);
     if (!redirect || !redirectAllowed(redirect, gh)) {
+      track(c, {
+        event: "oauth_start",
+        outcome: "invalid_redirect",
+        provider: "github",
+        meta: { mode: "link" },
+      });
       return c.json({ error: "invalid_redirect" }, 400);
     }
 
     const state = randomToken();
-    const record: StateRecord = { redirect, mode: "link", userId: c.get("userId") };
+    const flowId = crypto.randomUUID();
+    const record: StateRecord = {
+      redirect,
+      mode: "link",
+      userId: c.get("userId"),
+      flowId,
+    };
     await cfg(c).kv.put(`oauth:state:${state}`, JSON.stringify(record), {
       expirationTtl: STATE_TTL_SECONDS,
     });
 
+    track(c, {
+      event: "oauth_start",
+      outcome: "ok",
+      provider: "github",
+      userId: c.get("userId"),
+      flowId,
+      meta: { mode: "link" },
+    });
     return c.json(
       { authorizeUrl: buildAuthorizeUrl(gh, callbackUrlFor(c, gh), state) },
       200
@@ -238,14 +285,32 @@ export function registerGithubOauth<TEnv>(
     const stateKey = `oauth:state:${state}`;
     const rawState = state ? await cfg(c).kv.get(stateKey) : null;
     if (!code || !rawState) {
-      // state 无效即回跳地址不可信，只能就地报错
+      // state 无效即回跳地址不可信，只能就地报错。
+      // 此分支拿不到 flowId——它就存在读不出来的那条 state 记录里。
+      track(c, {
+        event: "oauth_callback",
+        outcome: "invalid_state",
+        provider: "github",
+      });
       return c.json({ error: "invalid_state" }, 400);
     }
     await cfg(c).kv.delete(stateKey); // 单次使用，验证即焚
-    const { redirect, mode, userId } = JSON.parse(rawState) as StateRecord;
+    const { redirect, mode, userId, flowId } = JSON.parse(rawState) as StateRecord;
+    const trackCallback = (outcome: string, meta?: Record<string, unknown>) =>
+      track(c, {
+        event: "oauth_callback",
+        outcome,
+        provider: "github",
+        ...(flowId ? { flowId } : {}),
+        ...(userId ? { userId } : {}),
+        meta: { mode: mode ?? "login", ...meta },
+      });
 
     const identity = await fetchGithubIdentity(gh, code);
-    if (!identity) return c.redirect(withParam(redirect, "error", "oauth_failed"), 302);
+    if (!identity) {
+      trackCallback("oauth_failed");
+      return c.redirect(withParam(redirect, "error", "oauth_failed"), 302);
+    }
     const { ghUser, ghToken, email, verifiedEmails } = identity;
 
     const userAgent = c.req.header("User-Agent") ?? undefined;
@@ -264,6 +329,7 @@ export function registerGithubOauth<TEnv>(
       const onLinked = cfg(c).onLinked;
       // userId 由 link/start 写入，缺失只可能是载荷被篡改/降级，保守失败
       if (!onLinked || !userId) {
+        trackCallback("internal");
         return c.redirect(withParam(redirect, "error", "internal"), 302);
       }
       let result;
@@ -271,22 +337,30 @@ export function registerGithubOauth<TEnv>(
         // email 在此可缺省：userId 已定，邮箱只是附加信息（与 login 分支的关键差别）
         result = await onLinked({ userId, ...common, ...(email ? { email } : {}) });
       } catch {
+        trackCallback("internal");
         return c.redirect(withParam(redirect, "error", "internal"), 302);
       }
       if (!result.ok) {
         const reason = REASON_PATTERN.test(result.reason) ? result.reason : "internal";
+        // 冲突原因分布是消费方业务规则的体检表（E2）
+        trackCallback("link_conflict", { reason });
         return c.redirect(withParam(redirect, "error", reason), 302);
       }
+      trackCallback("linked");
       return c.redirect(withParam(redirect, "linked", "github"), 302);
     }
 
     // ---- login 分支：email 是账号锚点，缺了就无法找号建号 ----
-    if (!email) return c.redirect(withParam(redirect, "error", "oauth_no_email"), 302);
+    if (!email) {
+      trackCallback("no_email");
+      return c.redirect(withParam(redirect, "error", "oauth_no_email"), 302);
+    }
 
     let verified;
     try {
       verified = await cfg(c).onVerified({ email, ...common });
     } catch {
+      trackCallback("internal");
       return c.redirect(withParam(redirect, "error", "internal"), 302);
     }
 
@@ -305,16 +379,28 @@ export function registerGithubOauth<TEnv>(
     );
 
     const otc = randomToken();
-    const payload: OtcPayload = {
+    const payload: OtcStoredPayload = {
       accessToken,
       refreshToken,
       ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
       ...(verified.user !== undefined ? { user: verified.user } : {}),
+      userId: verified.userId,
+      ...(flowId ? { flowId } : {}),
     };
     await cfg(c).kv.put(`oauth:otc:${otc}`, JSON.stringify(payload), {
       expirationTtl: OTC_TTL_SECONDS,
     });
 
+    // 服务端签发成功 ≠ 登录成功：客户端可能永远收不到这次回跳（回跳丢失 = D11）
+    track(c, {
+      event: "oauth_callback",
+      outcome: "issued",
+      provider: "github",
+      userId: verified.userId,
+      ...(flowId ? { flowId } : {}),
+      ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
+      meta: { mode: "login" },
+    });
     return c.redirect(withParam(redirect, "otc", otc), 302);
   });
 
@@ -328,9 +414,39 @@ export function registerGithubOauth<TEnv>(
     const otc = trimmedField(body.otc);
     const key = `oauth:otc:${otc}`;
     const raw = otc ? await cfg(c).kv.get(key) : null;
-    if (!raw) return c.json({ error: "invalid_otc" }, 400);
+    if (!raw) {
+      // otc 过期（60s）或已被兑换；与「回跳压根没到达」是两回事，故分开记
+      track(c, {
+        event: "oauth_exchange",
+        outcome: "invalid_otc",
+        provider: "github",
+      });
+      return c.json({ error: "invalid_otc" }, 400);
+    }
     await cfg(c).kv.delete(key); // 单次使用，兑换即焚
 
-    return c.json(JSON.parse(raw) as OtcPayload, 200);
+    // 解构即剥离：payload 的类型收窄回 OtcPayload，统计字段进不了响应体
+    const { userId, flowId, ...payload } = JSON.parse(raw) as OtcStoredPayload;
+    const trace = {
+      ...(userId ? { userId } : {}),
+      ...(flowId ? { flowId } : {}),
+    };
+    track(c, {
+      event: "oauth_exchange",
+      outcome: "ok",
+      provider: "github",
+      ...trace,
+    });
+    // 「登录成功」的口径落点在此而非 callback：这里才是客户端真正拿到 token 对的时刻。
+    // 顺带一个好处：此处的 country 来自客户端自己的网络，而非浏览器（授权页往往
+    // 挂着代理），比 callback 的国家更接近用户真实位置。
+    track(c, {
+      event: "login",
+      provider: "github",
+      ...trace,
+      ...(payload.isNewUser !== undefined ? { isNewUser: payload.isNewUser } : {}),
+    });
+
+    return c.json(payload, 200);
   });
 }
