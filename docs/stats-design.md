@@ -6,9 +6,9 @@
 > | 层 | 只回答一件事 | 状态 |
 > |---|---|---|
 > | L1 目的与边界 | 给谁看、看什么类问题、什么不在范围 | ✅ 定稿 |
-> | L2 指标清单 | 要哪些数、每个数的口径 | ✅ 定稿（核心 10 条已选） |
-> | **L3 数据模型** | 事件清单、表字段、接口变更 | ⬅️ **当前层** |
-> | L4 非功能 | 隐私、保留期、成本、版本 | 未开始 |
+> | L2 指标清单 | 要哪些数、每个数的口径 | ✅ 定稿（核心 10 条已选；C3 口径经 L3 反推修正） |
+> | L3 数据模型 | 事件清单、表字段、接口变更 | ✅ 定稿，含 v1 实现方案（见 6.） |
+> | L4 非功能 | 隐私、保留期、成本、版本 | 部分随 v1 定（开关默认开、写入方式、版本 1.4.0）；`ip`/`ua`/ASN/保留期**v1 不涉及**，留后续版本 |
 
 ---
 
@@ -117,7 +117,7 @@
 |---|---|---|---|
 |  | C1 | 发码量 | count(验证码发出) |
 | ✓ | C2 | 发码→验码转化 | 验码成功 / 发码成功 |
-| ✓ | C3 | 验码失败率与分因 | 码错 / 过期 / 已焚 / 达 5 次上限 各自占比 |
+| ✓ | C3 | 验码失败率与分因 | 三类各自占比：**码错**、**码不存在**、**达 5 次上限**。⚠ 口径经 L3 反推修正（2026-08-17）：原写「码错 / 过期 / 已焚 / 达上限」四类不可得——「过期」「已焚」「从未发过」「已用过」在 KV 层都表现为读不到码，**只能合并成「码不存在」一类** |
 |  | C4 | 验码耗时 | 验码成功时刻 − 发码时刻（p50/p90） |
 |  | C5 | 发码后未验比例 | 10 分钟内未完成验码的静默流失 |
 |  | C6 | 重复发码率 | 同一邮箱一轮内发多次的比例 |
@@ -221,23 +221,229 @@
 
 ---
 
-## 待议清单（L2 定稿前不讨论）
+## L3 数据模型（草案 2026-08-17）
 
-**L3 数据模型**
+**反推规则**：只为 10 条核心指标设计。每个字段都要能指名道姓地说出它服务哪条核心；说不出的，一律推到 L4 或砍掉。
 
-- 用户首登国家存哪：从事件表现算会被保留期截断，需要一张只增的用户维度小表？
-- 是否给 `onVerified` 的 `requestMeta` 补 country / asn（可选字段，minor 非 breaking），让消费方建档时即可用
-- 续期成功路径当前不发事件，导致 F2 没有分母
-- 长期趋势（A5/A6/B4/K3）是否需要按天聚合的汇总表
-- 漏斗串联需要一个贯穿 ①③⑤ 的标识；**不可用 state / otc 充当**（单次凭证不进长期表）
-- 「登录方式」目前不在会话表里，从事件取
-- 档 1：客户端标识走什么 header、格式如何、是否所有端点都带
-- 档 2：上报端点的形态——事件名白名单、限流、要不要认证、匿名事件（登录前就发生）怎么处理
-- 客户端事件与服务端事件同表还是分表；无论如何**来源必须可区分**，否则客户端的不完整数据会污染服务端的权威分母
-- 客户端上报的漏斗标识如何与服务端的对齐（D15~D19 全靠它才能和 D1/D3/D9 对上）
+### 1. 事件清单（7 个）
+
+| 事件 | outcome 取值 | 关键字段 | 服务的核心指标 | 现状 |
+|---|---|---|---|---|
+| `code_sent` | — | locale | C2 分母 | ✅ 已有，字段够用 |
+| `code_send_failed` | — | status（Resend HTTP 码） | **G1** | 新增 |
+| `code_verify` | `ok` / `invalid_code` / `code_not_found` / `too_many_attempts` | — | C2 分子、**C3** | 新增 |
+| `login` | — | provider、user_id、is_new_user、country | **A2 A3 B1 K3** | 新增 |
+| `oauth_start` | `ok` / `invalid_redirect` | flow_id、mode | D4 分母 | 新增 |
+| `oauth_callback` | `issued` / `linked` / `invalid_state` / `oauth_failed` / `no_email` / `link_conflict` / `internal` | flow_id、mode | D4 分子、**D11** 被减数 | 新增 |
+| `oauth_exchange` | `ok` / `invalid_otc` | flow_id、user_id | **D11** 减数 | 新增 |
+| `refresh` | `ok` / `rescued` / `reuse_revoked` / `guardrail_revoked` / `invalid` | user_id、family_id | **F2** | 已有三个异常 outcome，**缺 `ok`**（F2 至今没有分母） |
+
+要点：
+
+- **`login` 是「登录成功」的唯一口径落点**，两条轨都发它：邮箱轨在验码成功建会话后，**GitHub 轨在 `oauth_exchange` 成功时**（口径 = 客户端真正拿到 token 对）。**推论**：callback 建了会话但客户端从未兑换时，会话存在而没有 `login` 事件——这是**符合口径的**，正是 D11 要量的那部分。
+- `code_send_failed` 新开一个事件而不是给 `code_sent` 加 outcome：`code_sent` 现有语义是「已发出」，且已被 `hooks.test.ts` 锁定，改语义会波及消费方。
+- `invalid_state` 时**拿不到 flow_id**（state 读不出来，里面的 flow_id 自然也读不出），该条事件的 flow_id 为空——D4 的分子按计数算不受影响。
+
+### 2. 漏斗串联标识 flow_id
+
+`oauth_start` 生成一个随机 `flow_id`，写进 state 记录；callback 读出后带在事件上，并放进 otc 载荷；exchange 再读出来带上。三段由此精确配对。
+
+**不得复用 state / otc 充当此标识**——它们是单次凭证，写进一张长期保存的表等于留下凭证副本。
+
+有了它，D11 可以从「两个计数相减」升级为「存在 `issued` 但无 `ok` 的 flow_id 计数」，跨天与跨窗口的边界误差一并消失。
+
+### 3. 表结构（migration 0002）
+
+```sql
+CREATE TABLE IF NOT EXISTS auth_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  at          INTEGER NOT NULL,               -- UTC 毫秒
+  event       TEXT    NOT NULL,
+  outcome     TEXT,
+  provider    TEXT,                           -- email | github
+  user_id     TEXT,
+  flow_id     TEXT,
+  is_new_user INTEGER,                        -- 0 | 1 | NULL
+  country     TEXT,                           -- 缺失落 'unknown'
+  source      TEXT NOT NULL DEFAULT 'server', -- server | client
+  meta        TEXT                            -- JSON，低频扩展字段
+);
+CREATE INDEX IF NOT EXISTS idx_auth_events_at       ON auth_events(at);
+CREATE INDEX IF NOT EXISTS idx_auth_events_event_at ON auth_events(event, at);
+CREATE INDEX IF NOT EXISTS idx_auth_events_flow     ON auth_events(flow_id);
+
+-- K3 专用：只增不改，一个用户一行，行数 = 用户数
+CREATE TABLE IF NOT EXISTS user_first_seen (
+  user_id        TEXT PRIMARY KEY,
+  first_at       INTEGER NOT NULL,
+  first_country  TEXT,
+  first_provider TEXT
+);
+```
+
+`source` 列现在就要有（哪怕一期不写客户端事件）：客户端数据本质不完整，**必须能与服务端权威数据区分**，否则会污染分母。`client`（版本/平台）列等真做客户端上报时再 `ALTER TABLE ADD COLUMN`，SQLite 上这是便宜操作。
+
+**核心清单当裁判，砍掉的字段**（这就是核心清单的用途）：
+
+| 字段 | 谁需要它 | 裁决 |
+|---|---|---|
+| `email_hash` | C4 验码耗时（备选） | **不进本期**——C2/C3 只要计数，不需要按邮箱串联 |
+| `asn` | K9（备选） | **不进本期** |
+| `ip` | H 组滥用指标（全是备选） | **核心一条都不要求**；是否仍存属 L4 隐私决策 |
+| `ua` | 无核心指标 | 同上，留给 L4 |
+
+### 4. user_first_seen 的写入与语义
+
+`login` 事件发生时 `INSERT OR IGNORE`，国家取当次请求的值。这样 K3 不受事件保留期截断——从 `auth_events` 现算的话，保留期一到，老用户会被重新标成「保留窗口内最早那次」的国家。
+
+**一个必须写死的语义差异**：`is_new_user`（来自消费方 `onVerified`）= **App 用户表里新建了**；`user_first_seen` = **库第一次见到这个 user_id**。双轨迁移期两者会不一致（老 Logto 用户首次走 loginbase 登录，App 说不是新人、库说是）。**A3 一律以 `is_new_user` 为准**（真实业务语义），`user_first_seen` 只服务 K3。
+
+### 5. 需要的内部改动（均非协议变更）
+
+1. otc 载荷补 `userId` / `provider` / `flow_id`——当前 `OtcPayload` 只有 token 对与 `isNewUser`，**exchange 端点根本不知道自己让谁登录了**，`login` 事件发不出来。KV 内部结构，不进协议；
+2. OAuth state 记录补 `flow_id`；
+3. `email.ts` 的发信失败改抛带 `status` 的结构化错误——现在是 `throw new Error("Resend failed: 500 ...")`，字符串里有码但取不出来，G1 需要结构化的；
+4. `/refresh` 成功路径补 `emit`（现在只有异常分支发事件）；
+5. 验码成功、验码失败三分支补 `emit`；
+6. 事件写入通道：**与 `onEvent` 并行的独立出口**，同一个 emit 点扇出到两处。`onEvent` 是给消费方的钩子，不该被库劫持去写自己的表。
+
+### 6. v1 实现方案（档 A「建地基」，定 2026-08-17）
+
+投入产出比的取舍基于一个不对称：**地基是固定成本，事件是边际成本**。建表、写入通道、migration、开关是一次性投入；每个事件只是在已有分支里加一行 emit。既然地基要建，省事件省不下多少工，却会让指标缺一大块——而**代码可以迭代，数据不能补录**。今天不埋的点，下一版想看时只有从下一版开始的数据。
+
+**范围**：砍周边设施，不砍事件。
+
+| 带上 | 砍掉（不损失任何核心指标） |
+|---|---|
+| `auth_events` 表 + migration 0002 | `user_first_seen` 表——v1 不启用保留期清理，K3 从事件表现算就是准的；将来设保留期时再建并回填 |
+| 写入通道（约 60 行新文件） | `ip` / `ua` 列——核心一条都不要求，隐私尺度未定；登录成功那些请求的 ip 本就在 `sessions` 表里 |
+| 7 个服务端事件的 emit 点 | `email.ts` 抛结构化错误——降级为把错误串塞进 `meta`，Resend 的 status 本就在串里 |
+| `flow_id` 串联 | 保留期与 purge、客户端上报、查询 API、看板 |
+| otc 载荷补 `userId` / `provider` / `flow_id` | |
+
+#### 6.1 第一原则：统计绝不能成为登录的故障源
+
+**开关默认开启**（2026-08-17 定）。直接后果是：消费方升级了包却没跑 migration 时，表不存在。因此以下三条是硬约束，不是优化项：
+
+1. **所有统计写入包在 try/catch 内，异常一律吞掉**，绝不冒泡进请求处理——登录成功与否与统计写入无关；
+2. **`waitUntil` 异步写**，不进入响应关键路径（拿不到 `executionCtx` 时退化为 await，供测试环境用）；
+3. **首次失败发一次告警**（照抄 `email.ts` 里 `warnEmailConfigOnce` 的 once 模式），提示「请执行 migration 0002」，不刷屏。
+
+有这三条兜底，默认开启是安全的，且比默认关闭更好——消费方不会因为忘了配开关而白白丢掉一段时期的数据（那段数据无法补录）。
+
+#### 6.2 配置
+
+```ts
+stats?: {
+  /** 默认 true；置 false 则一条统计都不写 */
+  enabled?: boolean;
+};
+```
+
+**复用既有的 `db`**——不引入新 binding、不加任何依赖，与「依赖最小集」铁律无冲突。
+
+#### 6.3 表（migrations/0002_auth_events.sql）
+
+```sql
+CREATE TABLE IF NOT EXISTS auth_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  at          INTEGER NOT NULL,               -- UTC 毫秒
+  event       TEXT    NOT NULL,
+  outcome     TEXT,
+  provider    TEXT,                           -- email | github
+  user_id     TEXT,
+  flow_id     TEXT,
+  is_new_user INTEGER,                        -- 0 | 1 | NULL
+  country     TEXT,                           -- 取 request.cf.country，缺失落 'unknown'
+  source      TEXT NOT NULL DEFAULT 'server', -- server | client（client 留给二期）
+  meta        TEXT                            -- JSON：familyId、错误串等低频字段
+);
+CREATE INDEX IF NOT EXISTS idx_auth_events_at       ON auth_events(at);
+CREATE INDEX IF NOT EXISTS idx_auth_events_event_at ON auth_events(event, at);
+CREATE INDEX IF NOT EXISTS idx_auth_events_flow     ON auth_events(flow_id);
+```
+
+#### 6.4 事件落点（精确到分支）
+
+| 事件 | outcome | 落点 | 服务 |
+|---|---|---|---|
+| `code_sent` | — | `handler.ts` `/code/send` 现有 emit 处 | C2 分母 |
+| `code_send_failed` | — | 同端点 `sendCodeEmail` 的 catch；错误串进 `meta` | **G1** |
+| `code_verify` | `ok` / `invalid_code` / `code_not_found` / `too_many_attempts` / `internal` | `/code/verify` 四个返回分支 + `onVerified` 抛错处 | C2 分子、**C3** |
+| `login` | — | `/code/verify` 建会话后（provider=email）；`/oauth/exchange` 成功时（provider=github） | **A2 A3 B1 K3** |
+| `oauth_start` | `ok` / `invalid_redirect` | `github.ts` `/oauth/github/start` 与 `/link/start` 两处 | D4 分母 |
+| `oauth_callback` | `issued` / `linked` / `invalid_state` / `oauth_failed` / `no_email` / `link_conflict` / `internal` | callback 全部返回分支 | D4 分子、**D11** |
+| `oauth_exchange` | `ok` / `invalid_otc` | `/oauth/exchange` 两个分支 | **D11** |
+| `refresh` | `ok` / `rescued` / `reuse_revoked` / `guardrail_revoked` / `invalid` | `/refresh`；`ok` 是**新增的成功路径** | **F2** |
+
+#### 6.5 与 onEvent 的兼容性（硬约束）
+
+写入通道与 `onEvent` **并行**：同一个 emit 点扇出到两处，`onEvent` 是给消费方的钩子，不被库劫持去写自己的表。
+
+**现有 `code_sent` 与 `refresh` 事件传给 `onEvent` 的字段形态一个字不改**（`refresh` 现在带 `familyId` / `ip`，消费方可能已在读）。做法是让事件对象保留这些额外字段摊平传给 `onEvent`，写表时只挑列、其余进 `meta`。
+
+#### 6.6 内部改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `src/stats.ts` | 新增：表写入 + fail-safe + once 告警 |
+| `migrations/0002_auth_events.sql` | 新增（`migrations` 已在 package.json 的 `files` 里，随包分发） |
+| `src/config.ts` | 加 `stats` 配置 |
+| `src/handler.ts` | 4 处 emit（send 失败、verify 四分支、login、refresh ok） |
+| `src/plugins/github.ts` | 3 处 emit + `flow_id` 生成与透传（state 记录、otc 载荷各加字段） |
+| `test/stats.test.ts` | 新增 |
+
+#### 6.7 测试要点
+
+- **表不存在时登录照常成功**（默认开启的核心风险，必须有断言）；
+- 关闭开关后一条都不写；
+- 一次完整 OAuth 流程的三条事件 `flow_id` 相同；
+- 验码四个失败分支各自的 outcome 正确；
+- `refresh` 传给 `onEvent` 的字段形态与 1.3.0 完全一致（防回归）。
+
+#### 6.8 版本、分发与升级
+
+- 版本 **1.4.0**（新增配置项与新表，无 breaking）；
+- **不改 `protocol.md`**——请求与响应格式一个字没动，otc 载荷是 KV 内部结构。因此**不触发协议变更纪律**，`loginbase-kt` 无需开跟进 issue；
+- `server-design.md` 的数据模型节要补这张表（归库所有的表又多一张）；
+- README / 发版说明必须写明：**升级后需执行 migration 0002**，否则统计静默不落库（有 once 告警，登录不受影响）。
+
+#### 6.9 验收：核心 10 条的取数来源
+
+A2/A3/B1 ← `login` 事件；K3 ← `login` 事件按 user_id 取最早一条的 country；C2 ← `code_sent` 与 `code_verify(ok)`；C3 ← `code_verify` 各失败 outcome；D4 ← `oauth_start` 与 `oauth_callback`；D11 ← `oauth_callback(issued)` 与 `oauth_exchange(ok)` 按 flow_id 配对；F2 ← `refresh` 的 `rescued` / `ok`；G1 ← `code_send_failed`。
+
+### 7. 一期不需要任何客户端改动
+
+10 条核心里**没有一条带 `[客]`**——全部服务端可得。所以档 1+2 的客户端上报（`loginbase-kt` + 消费方）可以整体推到二期，一期不被客户端版本节奏卡住。
+
+这不与 L1 冲突：L1 定的是**范围**（会做），L2 核心定的是**一期验收**。但需要你确认这个分期。
+
+---
+
+## 待议清单
+
+**L3 数据模型（已裁决 2026-08-17）**
+
+| 条目 | 裁决 |
+|---|---|
+| 用户首登国家存哪 | ✅ 独立小表 `user_first_seen`；从事件表现算会被保留期截断 |
+| `requestMeta` 补 country / asn | ❌ **不做**——K3 已由库内表解决，没有核心指标要求消费方侧拿到国家。想要可日后单提 |
+| 续期成功不发事件 | ✅ 补 `refresh` 的 `ok` outcome，F2 的分母到位 |
+| 长期趋势要不要汇总表 | ❌ **不做**——A5/A6/B4 全是备选；核心里的 K3 由 `user_first_seen` 解决 |
+| 漏斗串联标识 | ✅ `flow_id`，start 生成、经 state 与 otc 载荷透传；不复用 state / otc |
+| 登录方式不在会话表 | ✅ 由 `login` 事件的 `provider` 字段提供，会话表不动 |
+| 档 1 客户端标识 header | ⏭ 推二期（核心无 `[客]` 指标） |
+| 档 2 上报端点形态 | ⏭ 推二期 |
+| 客户端事件与服务端事件同表？ | ✅ 同表，`source` 列区分；该列一期就建好 |
+| 客户端漏斗标识如何对齐 | ⏭ 推二期，届时直接复用 `flow_id` |
 
 **L4 非功能**
 
+- **`ip` / `ua` 存不存**——v1 不存。核心指标一条都不要求（只有 H 组滥用指标需要，全是备选），纯粹是隐私与排障价值的权衡，将来是 `ALTER TABLE ADD COLUMN`
+- ✅ 写入方式已定（v1 6.1）：`waitUntil` 异步、单条、失败吞掉。**`refresh` 的 `ok` 是全场最高频事件**（每设备每小时一次），量真起来后按它评估是否需要批量或采样
+- ✅ 开关默认值已定：**默认开启**（2026-08-17），代价由 6.1 的三条 fail-safe 硬约束兜住
+- ✅ migration 分发路径已定（v1 6.8）：随包分发，消费方升级后须执行 0002
+- 保留期与 purge：v1 不做（现全表 12 行）；真要设时须先建 `user_first_seen` 并回填，否则 K3 会被截断失真
 - ASN 存不存、存数字还是组织名（隐私增量 = IP 删除后仍存活的网络画像残留）
 - 邮箱是否只存哈希、IP 保留 30 天、事件保留 90 天
 - 库内建可选模块（默认关闭）vs 消费方自建
