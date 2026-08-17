@@ -9,19 +9,35 @@
 
 -- ============================================================
 -- 00 · 哨兵：一条命令扫掉所有该警惕的东西（近 1 天）
--- 平时应当返回空。非空就逐条看，别等日报。
+--
+-- 分两档看，别混为一谈：
+--   A·出现即查 —— 故障。非零就是有东西坏了，逐条追。
+--   B·看量级   —— 不是故障，是**用户在撞墙**。少量正常，成堆就是产品问题。
+--
+-- B 档是 2026-08-17 首次面对真流量后补的：那天 link_conflict 发生了 14 次，
+-- 而当时的哨兵只盯故障，返回空。覆盖面只能被真实数据检验出来，纸上想不全。
 -- ============================================================
-SELECT event, outcome, COUNT(*) AS n
+SELECT CASE WHEN event = 'code_send_failed'
+              OR (event='refresh'        AND outcome IN ('reuse_revoked','guardrail_revoked'))
+              OR (event='oauth_callback' AND outcome IN ('oauth_failed','no_email','internal'))
+              OR (event='code_verify'    AND outcome = 'internal')
+            THEN 'A·出现即查' ELSE 'B·看量级' END AS severity,
+       event, outcome, COUNT(*) AS n
 FROM auth_events
 WHERE at >= (strftime('%s','now','-1 day') * 1000)
   AND (
-       event IN ('code_send_failed', 'rate_limited')                              -- 发不出邮件 / 用户被挡
-    OR (event = 'refresh'         AND outcome IN ('reuse_revoked','guardrail_revoked'))  -- 杀链；guardrail 非零 = 客户端单飞纪律破了
-    OR (event = 'oauth_callback'  AND outcome IN ('oauth_failed','no_email','internal')) -- GitHub 侧故障 / 用户被挡门外 / 消费方 bug
-    OR (event = 'code_verify'     AND outcome = 'internal')                       -- onVerified 抛错
+    -- A 档：故障
+       event = 'code_send_failed'                                                  -- 发不出邮件，邮箱轨整条断
+    OR (event = 'refresh'        AND outcome IN ('reuse_revoked','guardrail_revoked')) -- 杀链；guardrail 非零 = 客户端单飞纪律破了
+    OR (event = 'oauth_callback' AND outcome IN ('oauth_failed','no_email','internal')) -- GitHub 侧故障 / 用户被挡门外 / 消费方 bug
+    OR (event = 'code_verify'    AND outcome = 'internal')                          -- onVerified 抛错
+    -- B 档：用户撞墙
+    OR (event = 'oauth_callback' AND outcome = 'link_conflict')                     -- 绑定被业务规则拒绝，reason 在 meta 里
+    OR  event = 'rate_limited'                                                      -- cooldown 层无害；email/ip 层 = 真发不出码
+    OR (event = 'oauth_exchange' AND outcome = 'invalid_otc')                       -- otc 60 秒不够用 / 回跳绕了远路
   )
-GROUP BY event, outcome
-ORDER BY n DESC;
+GROUP BY severity, event, outcome
+ORDER BY severity, n DESC;
 
 
 -- ============================================================
