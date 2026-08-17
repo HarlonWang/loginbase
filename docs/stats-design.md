@@ -273,15 +273,9 @@ CREATE TABLE IF NOT EXISTS auth_events (
 CREATE INDEX IF NOT EXISTS idx_auth_events_at       ON auth_events(at);
 CREATE INDEX IF NOT EXISTS idx_auth_events_event_at ON auth_events(event, at);
 CREATE INDEX IF NOT EXISTS idx_auth_events_flow     ON auth_events(flow_id);
-
--- K3 专用：只增不改，一个用户一行，行数 = 用户数
-CREATE TABLE IF NOT EXISTS user_first_seen (
-  user_id        TEXT PRIMARY KEY,
-  first_at       INTEGER NOT NULL,
-  first_country  TEXT,
-  first_provider TEXT
-);
 ```
+
+**migration 0002 只有这一张表。** 另有一张 `user_first_seen` 的设计见下节——**v1 不建**，K3 直接从事件表现算。
 
 `source` 列现在就要有（哪怕一期不写客户端事件）：客户端数据本质不完整，**必须能与服务端权威数据区分**，否则会污染分母。`client`（版本/平台）列等真做客户端上报时再 `ALTER TABLE ADD COLUMN`，SQLite 上这是便宜操作。
 
@@ -294,9 +288,21 @@ CREATE TABLE IF NOT EXISTS user_first_seen (
 | `ip` | H 组滥用指标（全是备选） | **核心一条都不要求**；是否仍存属 L4 隐私决策 |
 | `ua` | 无核心指标 | 同上，留给 L4 |
 
-### 4. user_first_seen 的写入与语义
+### 4. user_first_seen ——**将来项，v1 不建**
 
-`login` 事件发生时 `INSERT OR IGNORE`，国家取当次请求的值。这样 K3 不受事件保留期截断——从 `auth_events` 现算的话，保留期一到，老用户会被重新标成「保留窗口内最早那次」的国家。
+```sql
+-- ⚠️ 未在 migration 0002 中创建。设保留期时才需要它。
+CREATE TABLE IF NOT EXISTS user_first_seen (
+  user_id        TEXT PRIMARY KEY,
+  first_at       INTEGER NOT NULL,
+  first_country  TEXT,
+  first_provider TEXT
+);
+```
+
+**v1 的 K3 直接从 `auth_events` 现算**（每个 user_id 取最早一条 `login` 的 country），因为 v1 不做保留期清理，「最早」就是真的最早。
+
+这张表要解决的是**将来设了保留期之后**的失真：数据一被清理，老用户就会被重新标成「保留窗口内最早那次」的国家。届时的做法是先建表、从当时还在的事件回填，再开清理——**顺序反了就永久丢失早期归属国**。写入时机为 `login` 事件发生时 `INSERT OR IGNORE`，国家取当次请求的值。
 
 **一个必须写死的语义差异**：`is_new_user`（来自消费方 `onVerified`）= **App 用户表里新建了**；`user_first_seen` = **库第一次见到这个 user_id**。双轨迁移期两者会不一致（老 Logto 用户首次走 loginbase 登录，App 说不是新人、库说是）。**A3 一律以 `is_new_user` 为准**（真实业务语义），`user_first_seen` 只服务 K3。
 
