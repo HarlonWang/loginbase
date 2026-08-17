@@ -70,6 +70,7 @@ export async function initDb() {
   const schema = `
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, pro_expires_at INTEGER, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, family_id TEXT NOT NULL, expires_at INTEGER, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL, user_agent TEXT, ip TEXT, revoked_at INTEGER, replaced_by_id TEXT, rescued_at INTEGER);
+    CREATE TABLE IF NOT EXISTS auth_events (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, event TEXT NOT NULL, outcome TEXT, provider TEXT, user_id TEXT, flow_id TEXT, is_new_user INTEGER, country TEXT, source TEXT NOT NULL DEFAULT 'server', meta TEXT);
   `;
   for (const stmt of schema.split(";").filter((s) => s.trim())) {
     await env.DB.prepare(stmt).run();

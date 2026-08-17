@@ -53,3 +53,5 @@ export * from "./rate_limit.js";
 export * from "./session.js";
 export * from "./token.js";
 export { logEvent } from "./log.js";
+// flushStats 供消费方测试等待异步写入落定；生产路径走 waitUntil，无需调用
+export { flushStats, type StatEvent } from "./stats.js";

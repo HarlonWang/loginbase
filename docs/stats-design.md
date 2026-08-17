@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS user_first_seen (
 
 ### 5. 需要的内部改动（均非协议变更）
 
-1. otc 载荷补 `userId` / `provider` / `flow_id`——当前 `OtcPayload` 只有 token 对与 `isNewUser`，**exchange 端点根本不知道自己让谁登录了**，`login` 事件发不出来。KV 内部结构，不进协议；
+1. otc 载荷补 `userId` / `flowId`——当前 `OtcPayload` 只有 token 对与 `isNewUser`，**exchange 端点根本不知道自己让谁登录了**，`login` 事件发不出来。KV 内部结构，不进协议；兑换时把这两个字段解构掉再返回，响应形态因此与 1.3.0 一字不差（有断言锁住）。**provider 不必带**——otc 只由 github 插件生成，端点内即可确定；
 2. OAuth state 记录补 `flow_id`；
 3. `email.ts` 的发信失败改抛带 `status` 的结构化错误——现在是 `throw new Error("Resend failed: 500 ...")`，字符串里有码但取不出来，G1 需要结构化的；
 4. `/refresh` 成功路径补 `emit`（现在只有异常分支发事件）；
@@ -308,6 +308,8 @@ CREATE TABLE IF NOT EXISTS user_first_seen (
 6. 事件写入通道：**与 `onEvent` 并行的独立出口**，同一个 emit 点扇出到两处。`onEvent` 是给消费方的钩子，不该被库劫持去写自己的表。
 
 ### 6. v1 实现方案（档 A「建地基」，定 2026-08-17）
+
+> **状态：已实现**（`feat/stats` 分支，版本 1.4.0，测试 117 → 129 全绿）。下方内容即端态描述。
 
 投入产出比的取舍基于一个不对称：**地基是固定成本，事件是边际成本**。建表、写入通道、migration、开关是一次性投入；每个事件只是在已有分支里加一行 emit。既然地基要建，省事件省不下多少工，却会让指标缺一大块——而**代码可以迭代，数据不能补录**。今天不埋的点，下一版想看时只有从下一版开始的数据。
 
@@ -319,7 +321,7 @@ CREATE TABLE IF NOT EXISTS user_first_seen (
 | 写入通道（约 60 行新文件） | `ip` / `ua` 列——核心一条都不要求，隐私尺度未定；登录成功那些请求的 ip 本就在 `sessions` 表里 |
 | 7 个服务端事件的 emit 点 | `email.ts` 抛结构化错误——降级为把错误串塞进 `meta`，Resend 的 status 本就在串里 |
 | `flow_id` 串联 | 保留期与 purge、客户端上报、查询 API、看板 |
-| otc 载荷补 `userId` / `provider` / `flow_id` | |
+| otc 载荷补 `userId` / `flowId` | |
 
 #### 6.1 第一原则：统计绝不能成为登录的故障源
 

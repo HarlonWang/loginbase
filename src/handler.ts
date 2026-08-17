@@ -29,6 +29,7 @@ import {
 import { signAccessToken, ACCESS_TTL_SECONDS } from "./token.js";
 import { createAuthMiddleware, type AuthVariables } from "./middleware.js";
 import { logEvent } from "./log.js";
+import { createTracker } from "./stats.js";
 import { trimmedField } from "./body.js";
 import { registerGithubOauth } from "./plugins/github.js";
 import type { LoginConfig, VerifiedResult } from "./config.js";
@@ -41,6 +42,8 @@ export function createAuthApp<TEnv>(
   const auth = new Hono<{ Variables: AuthVariables }>().basePath(basePath);
   const cfg = (c: { env: unknown }) => getConfig(c.env as TEnv);
   const emit = (c: { env: unknown }) => cfg(c).onEvent ?? logEvent;
+  // 统计事件统一出口：内部先喂 onEvent（形态与 1.3.0 一致），再异步落 auth_events
+  const track = createTracker(getConfig);
   const accessTtl = (c: { env: unknown }) =>
     cfg(c).jwt.accessTtlSeconds ?? ACCESS_TTL_SECONDS;
   const sessionExpiry = (c: { env: unknown }) => {
@@ -73,16 +76,21 @@ export function createAuthApp<TEnv>(
     const locale = resolveEmailLocale(cfg(c).email, body.locale);
     try {
       await sendCodeEmail(cfg(c).email, raw, code, locale.locale);
-    } catch {
+    } catch (err) {
+      // 发信失败此前不留任何痕迹；邮件是邮箱登录的命脉，断了整条链就没了。
+      // Resend 的 HTTP 码在错误串里，聚合时再解析（不为此改造 email.ts 的抛错形态）。
+      track(c, { event: "code_send_failed", meta: { message: String(err) } });
       return c.json({ error: "internal" }, 500);
     }
     // 静默回落意味着「为什么收到英文邮件」在别处查不出来，故选中语言必须留痕
-    emitEvent({
+    track(c, {
       event: "code_sent",
-      locale: {
-        resolved: locale.locale,
-        ...(locale.requested ? { requested: locale.requested } : {}),
-        ...(locale.fallback ? { fallback: true } : {}),
+      meta: {
+        locale: {
+          resolved: locale.locale,
+          ...(locale.requested ? { requested: locale.requested } : {}),
+          ...(locale.fallback ? { fallback: true } : {}),
+        },
       },
     });
 
@@ -99,14 +107,20 @@ export function createAuthApp<TEnv>(
     const code = trimmedField(body.code);
 
     const stored = await readCode(cfg(c).kv, email);
-    if (!stored) return c.json({ error: "code_expired" }, 400);
+    if (!stored) {
+      // 过期、已焚、从未发过、已用过——在 KV 层都表现为读不到，无法再分（C3 口径）
+      track(c, { event: "code_verify", outcome: "code_not_found" });
+      return c.json({ error: "code_expired" }, 400);
+    }
 
     if (stored.code !== code) {
       const attempts = await incrementAttempts(cfg(c).kv, email, stored);
       if (attempts >= MAX_ATTEMPTS) {
         await deleteCode(cfg(c).kv, email);
+        track(c, { event: "code_verify", outcome: "too_many_attempts" });
         return c.json({ error: "too_many_attempts" }, 429);
       }
+      track(c, { event: "code_verify", outcome: "invalid_code" });
       return c.json({ error: "invalid_code" }, 400);
     }
 
@@ -125,6 +139,7 @@ export function createAuthApp<TEnv>(
         requestMeta: { ip, userAgent },
       });
     } catch {
+      track(c, { event: "code_verify", outcome: "internal" });
       return c.json({ error: "internal" }, 500);
     }
 
@@ -142,6 +157,16 @@ export function createAuthApp<TEnv>(
       accessTtl(c)
     );
 
+    track(c, { event: "code_verify", outcome: "ok" });
+    // 「登录成功」的唯一口径落点：客户端拿到 token 对。GitHub 轨的同名事件在
+    // /oauth/exchange 发（那里才是客户端真正拿到 token 的时刻）。
+    track(c, {
+      event: "login",
+      provider: "email",
+      userId: verified.userId,
+      ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
+    });
+
     return c.json({
       accessToken,
       refreshToken,
@@ -156,6 +181,7 @@ export function createAuthApp<TEnv>(
       .catch(() => ({} as { refreshToken?: string }));
     const token = trimmedField(body.refreshToken);
     if (!token) {
+      track(c, { event: "refresh", outcome: "invalid", meta: { reason: "missing_token" } });
       return c.json(
         { error: "invalid_refresh_token", reason: "missing_token" },
         401
@@ -165,6 +191,11 @@ export function createAuthApp<TEnv>(
     const sessionId = await hashRefreshToken(token);
     const row = await findSession(cfg(c).db, sessionId);
     if (!row) {
+      track(c, {
+        event: "refresh",
+        outcome: "invalid",
+        meta: { reason: "session_not_found" },
+      });
       return c.json(
         { error: "invalid_refresh_token", reason: "session_not_found" },
         401
@@ -182,12 +213,12 @@ export function createAuthApp<TEnv>(
         sessionExpiry(c)
       );
       if (rescue.status === "rescued") {
-        emit(c)({
+        track(c, {
           event: "refresh",
           outcome: "rescued",
           userId: row.user_id,
-          familyId: row.family_id,
-          ip: ip ?? null,
+          meta: { familyId: row.family_id },
+          hookOnly: { ip: ip ?? null },
         });
         const accessToken = await signAccessToken(
           cfg(c).jwt.secret,
@@ -199,13 +230,13 @@ export function createAuthApp<TEnv>(
       }
       // 救活不成立 → 判定真重用，撤销整条会话链。guardrail 与 not_eligible 分开记录。
       await revokeFamily(cfg(c).db, row.family_id);
-      emit(c)({
+      track(c, {
         event: "refresh",
         outcome:
           rescue.status === "guardrail" ? "guardrail_revoked" : "reuse_revoked",
         userId: row.user_id,
-        familyId: row.family_id,
-        ip: ip ?? null,
+        meta: { familyId: row.family_id },
+        hookOnly: { ip: ip ?? null },
       });
       return c.json(
         { error: "invalid_refresh_token", reason: "session_revoked" },
@@ -214,6 +245,12 @@ export function createAuthApp<TEnv>(
     }
 
     if (row.expires_at !== null && row.expires_at <= Date.now()) {
+      track(c, {
+        event: "refresh",
+        outcome: "invalid",
+        userId: row.user_id,
+        meta: { reason: "session_expired" },
+      });
       return c.json(
         { error: "invalid_refresh_token", reason: "session_expired" },
         401
@@ -229,6 +266,12 @@ export function createAuthApp<TEnv>(
       sessionExpiry(c)
     );
     if (!next) {
+      track(c, {
+        event: "refresh",
+        outcome: "invalid",
+        userId: row.user_id,
+        meta: { reason: "rotate_failed" },
+      });
       return c.json(
         { error: "invalid_refresh_token", reason: "rotate_failed" },
         401
@@ -241,6 +284,14 @@ export function createAuthApp<TEnv>(
       next.sessionId,
       accessTtl(c)
     );
+
+    // 成功续期此前不发事件，救活率（F2）因此一直没有分母
+    track(c, {
+      event: "refresh",
+      outcome: "ok",
+      userId: row.user_id,
+      meta: { familyId: row.family_id },
+    });
 
     return c.json({ accessToken, refreshToken: next.refreshToken });
   });
