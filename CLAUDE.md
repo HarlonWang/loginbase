@@ -1,6 +1,6 @@
 # loginbase
 
-多 App 共用的登录底座（邮箱验证码 + 社交 OAuth + 会话管理）。**开工前先读 README.md 和 `docs/design.md`**——路线选择、API 草案、分发方式、落地五步全在里面；服务端完整技术方案（公共 API、协议草案、会话模型、平移映射）见 `docs/server-design.md`；命名相关看 `docs/naming.md`（含死名单，别重新讨论命名）；项目由来看 `docs/logto-替换方案-调研.md`。
+多 App 共用的登录底座（邮箱验证码 + 社交 OAuth + 会话管理）。**开工前先读 README.md 和 `docs/design.md`**——路线选择、API 草案、分发方式、落地五步全在里面；服务端完整技术方案（公共 API、协议草案、会话模型、平移映射）见 `docs/server-design.md`；登录统计的指标口径与数据模型见 `docs/stats-design.md`；**接入方必读 `docs/email-identity.md`**（GitHub 邮箱模型、为何不该拿邮箱当身份锚点）；实施进度与历次读数在 `docs/plan.md`；命名相关看 `docs/naming.md`（含死名单，别重新讨论命名）；项目由来看 `docs/logto-替换方案-调研.md`。
 
 ## 关联仓库（本仓库外的源头与消费方）
 
@@ -25,15 +25,12 @@
 - npm 分发走 registry 正式发包（`loginbase`，tag 触发 CI + trusted publishing），registry 是唯一分发路径。仓库不再被分发链路强制 public（2026-08-10 由 git-tag 方案改来，理由见 design.md 分发节）。
 - KMP 分发走 Maven Central（`wang.harlon:loginbase-kt`，vanniktech 插件，**在 `loginbase-kt` 仓**由其自有 tag 触发 CI，照抄 kmp-webview；凭证在 HarlonWang/secrets 的 `maven-publishing/`），iOS target 只能在 macOS 构建（2026-08-10 由 R2 静态 Maven 改来，理由见 design.md 分发节）。
 
-## 当前状态
+## 当前状态（2026-08-20）
 
-**第 0~3 步已完成**；**第 4 步接近完成，只剩发版**（2026-08-14）。
+**第 0~3 步完成；第 4 步已上生产但客户端库未发版；第 5 步未启动。** 本节只记版本号、阻塞项与最新结论，**细节一律不复述**——PR 号、测试数、每次读数的明细都在 `docs/plan.md` 对应小节，那里是唯一档案。
 
-- **服务端**：`loginbase@1.2.0` 已发布（link 语义 + providerAccessToken/verifiedEmails 透传 + scope 可配）。**`loginbase@1.4.0` 已发布**（2026-08-17，登录统计）：`auth_events` 表 + 10 类事件 + `flow_id` 串 OAuth 三段 + 地理六项，**默认开启**且失败不影响登录；指标口径与分层决策全在 `docs/stats-design.md`（讨论按 L1 边界→L2 指标→L3 数据模型分层定稿，连带问题进待议清单）。**两个消费方升级时须执行 migration 0002**，否则统计静默不落库（登录不受影响，有一次 `stats_unavailable` 告警）。二期未做：客户端上报（档 1+2）、查询 API 与看板、保留期。
-- **客户端库**：`HarlonWang/loginbase-kt` 已建仓，核心实现完成（AuthClient / TokenStore 双平台 / AuthState / 单飞 refresh，25 测试），**未发 Maven**——TrendingAI 目前经 composite build 吃本地源码（`local.properties` 配 `loginbase-kt.dir`，是必需配置）。四个 Maven Central secrets 未配。
-- **后端消费方**（github-ai-trending-api，已部署生产）：GitHub token 加密保管（migration 039 + `GH_TOKEN_KEY`，密钥存档 `HarlonWang/secrets` 的 `trendingai-api/`）、`onLinked` 绑定、`GET/DELETE /api/github/token`、OAuth 白名单改用 wrangler vars、scope 补 `public_repo`。PR #32/33/34/35。
-- **客户端消费方**（TrendingAI）：**PR #99 待审**（`feat/loginbase-auth`，9 commits）。已完成登录面板（邮箱原生两屏 + GitHub）、OAuth 回跳（透明中转 Activity）、token 取回换自家端点、绑定改走 link 流程、业务请求 401 重试、C 方案升级横幅。
-- **生产真机验证过**：邮箱登录（命中原账号、重启恢复）、GitHub 登录（Pro 打通、`gh_token_enc` 落库）、升级横幅、回跳复用实例。**绑定 link 流程 2026-08-17 已验**（首批统计读数里 15 次到达 callback：14 次 `github_in_use` 冲突 + 1 次成功，冲突判定与 reason 透传整条链正常；读数见 `docs/stats-design.md` 6.13）。
-- **待讨论（挂起，见 plan.md 第 4 步「待讨论」）**：①单飞 refresh；③Android App Links（custom scheme 劫持的根治）；④**OAuth 回跳机制是否下沉到 loginbase-kt**（当前边界：库给 URL、消费方走完流程；决策取决于第 5 步是否接 Tono-Android）。
-- **邮件语言与模板体系**（原「邮件 locale」挂起项）：**`loginbase@1.3.0` 已发布**（2026-08-14，真包冒烟 14 条断言通过）——`locale`→`fallbackLocale` 正名（旧键直接删、不留兼容）、`templates` 改按语言分表 + 部件级、请求级 `locale`。客户端 `localeProvider` 已实现并合并（loginbase-kt PR #4），**未发 Maven**。**含配置 API 的 BREAKING 但不推 major**：受影响面实测为零（走 loginbase 的客户端尚未发布，`locale: 'zh'` 至今没渲染过生产邮件）。方案见 server-design.md「语言与模板体系」+ design.md 客户端节。消费方 github-ai-trending-api **已升级并部署生产**（PR #36：依赖钉死 1.3.0、删掉 `locale: 'zh'` 且**不配 `fallbackLocale`**、加 5 个把断言落在 Resend subject 上的测试）。**剩余**：发 TrendingAI PR #99（顺序 A：客户端首版即会上报语言，故不存在「不传 locale 的世代」）；**未做生产端到端验证**（要真发一封验证码邮件才能验语言）。
-- **观察项**：TrendingAI 双轨 track 占比、email 哨兵（基线 94 只应降）、Tono refresh 事件频率。**2026-08-14 首次三源取数完毕**（读数、口径备忘、日志只留 3 天的取数纪律见 plan.md「D 层观察期读数」）：线上真实用户仍 100% 走 logto 轨道（loginbase 侧全是真机验证），老版本登录与会话无回归，哨兵持平 94。
+- **线上版本**：服务端 `loginbase@1.4.0`（1.3.0 = 语言与模板体系，1.4.0 = 登录统计）；两个消费方 github-ai-trending-api 与 TrendingAI（App 1.3.0，2026-08-18 发版）均已在生产。
+- **阻塞项**：① `loginbase-kt` 未发 Maven Central，卡在四个 secrets 未配（值在 `HarlonWang/secrets` 的 `maven-publishing/`，需本人操作），TrendingAI 现经 composite build 吃本地源码，`local.properties` 的 `loginbase-kt.dir` 是必需配置；② **消费方升级到 1.4.0 必须执行 migration 0002**，否则统计静默不落库（登录不受影响，只有一次 `stats_unavailable` 告警）。
+- **最新读数**（08-20 第二次三源交叉，见 plan.md「第二次读数」）：新轨功能面健康、存量映射有生产实证；但日活设备渗透率仅 3.4%，**Logto 退役远未到评估窗口**。email 哨兵 92（基线 94，只应降不应升）。
+- **未拍板**：单飞 refresh、Android App Links、OAuth 回跳是否下沉到 loginbase-kt（plan.md 第 4 步「待讨论」）；link 错误回跳带 `mode=link`（协议 minor）；邮箱单值锚点导致的重复账号（属消费方业务规则，见 `docs/email-identity.md`）。
+- **未验证**：邮件语言的生产端到端——要真发一封验证码邮件才能验。
