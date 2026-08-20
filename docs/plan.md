@@ -97,6 +97,37 @@
 
 **顺带发现**（与双轨无关，已记入 design.md 单飞 refresh 节）：老版本 App 的 Logto refresh 交换失败率 17.4%，全为 `invalid_grant`，来自 16 个不同 IP 且密集成簇——并发刷新竞态的线上病例。
 
+### 第二次读数（2026-08-20，消费方 App 1.3.0 发版后首读）
+
+消费方 TrendingAI 1.3.0 于 2026-08-18 17:37 CST 发版，这是双轨上线以来**第一次有真实用户流量进 loginbase 轨**。
+
+结论：**新轨功能面健康、存量映射生效（2 例存量用户走 GitHub 登录均命中原 `user_id`）；但渗透率极低，退役远未到评估窗口。**
+
+| 源 | 读数 | 判读 |
+|---|---|---|
+| Workers Logs `track` 打点（按 CST 分天） | 08-19 loginbase 24 / logto 141（14.5%）；08-20 至 17:20 loginbase 29 / logto 69（29.6%） | **只有 08-19 起是真实流量**——08-15~18 的 12%→62% 高占比全是发版前回归测试，与 `sessions` 建链数逐一吻合。⚠ 这是**调用量**占比不是用户占比，新轨用户全是刚登录的活跃用户，会放大分子 |
+| 消费方客户端埋点（日活设备口径） | 新版设备占比 08-18 2.5% → 08-19 3.4% | 渗透率的正确读数。与上一行差一个量级不矛盾（调用量 vs 设备数） |
+| 消费方 D1 | `sessions` 08-18 起 5/4/4 用户建链；剔除本人测试号后 7 个真实用户，其中 2 个是存量用户命中原 `user_id` | 存量映射生产实证有效 |
+| email 哨兵 SQL | **92**（基线 94，↓2） | ✅ 只降不升，上表「无洞」假设仍成立 |
+
+**一个真实用户病例（消费方业务规则，非库的问题）**：一名存量 GitHub 用户升级后选了**邮箱登录**，
+建出全新账号，随后连试 3 次绑 GitHub，最终 `oauth_callback / outcome:link_conflict / reason:github_in_use`。
+
+根因**不是**「拿不到 email」——该用户的账号里有邮箱，只是他登录时输入了**自己的另一个邮箱**，
+而消费方的邮箱锚点是单值精确匹配。**这类风险与 email 回填的完成度无关，只要「一个账号只记一个
+邮箱」，任何多邮箱用户都可能触发。** 详见 `email-identity.md`（该文档即由本次排查产出）。
+处置属消费方业务规则，未拍板。
+
+**取数口径备忘（补充上面三条）**：
+
+4. **Observability API 的 `operation` 大小写不等价**——`"INCLUDES"` 合法但**恒返回 0**，必须用小写 `includes` / `starts_with`。曾据此误判「`/auth` 端点无流量」。
+5. **宽窗口下 `view:"events"` 与 `groupBy` 都不可信，且会互相打架**——7 天窗口里 events 严重截断（同一 filter 下 calculations 计 20 条、events 只吐 1 条）；而 `groupBy` 的计数自相矛盾（同一批日志按 `userId` 分组总数 8、按另两个字段分组各 20，三者本应相等）。**要明细就把 timeframe 收窄到目标时刻前后 1~2 小时再用 `view:"events"`**（收窄后一次拿全，且与 D1 独立推理完全一致）；`groupBy` 只用于看趋势和量级，不要拿它穷举或指认具体记录——2026-08-20 据此误判过一次「诊断日志没记到」。
+6. **`groupBy` 只对结构化日志字段（`track` / `event` / `outcome` / `userId` 等）与 `$workers.scriptName` 有效**，对 `$workers.event.request.path` / `response.status` 返回空（filter 用它们正常）。多字段 groupBy 里只要含一个无效字段，整个查询返回空。
+7. **Workers Logs 混了多个消费方 Worker**（本库是跨 App 底座），查 `/auth/*` 端点流量必须加 `$workers.scriptName` 过滤。
+
+> 完整读数（含真实用户邮箱与 `user_id`、逐日明细、消费方侧待办）在**私有**仓库：
+> `TrendingProjects/loginbase-双轨读数-2026-08-20.md` 。本文档为 public，故此处只留脱敏结论。
+
 ### 双轨生命周期（2026-08-12 对齐）
 
 地基是「同一账号，两种凭证」：无论 Logto token 还是 loginbase token，后端都解析到同一 `user_id`（email / `github_user_id` 双键映射）。两种 token 可结构化区分（HS256 vs RS256 + issuer），requireAuth 按 alg/issuer 路由而非盲试。
@@ -270,7 +301,7 @@
 
   **业界把这条线划在另一侧**：AppAuth（`RedirectUriReceiverActivity` + `AuthorizationManagementActivity`）与 Logto SDK（两个 Activity 都在 SDK manifest 里）都把浏览器往返关在库内，消费方只注入一个 scheme placeholder。
 
-  **下沉的代价**：①Android 侧要引 `androidx.browser`（Custom Tabs）——**直接撞依赖最小集红线**，绕法是退回 `Intent.ACTION_VIEW` 或让消费方传「打开 URL」的回调、库只接管回跳一半；②库要带 Activity + manifest，「库不含 UI」这条边界需要更精确的措辞（Activity 属平台集成，不是 UI）；③iOS 的 `ASWebAuthenticationSession` 自带取消回调，与 Android 机制完全不同，两端各写一套。
+  **下沉的代价**：①Android 侧要引 `androidx.browser`（Custom Tabs）——**要过依赖准入的「业界权威库」四条判据**（2026-08-18 改判前是直接撞红线，现改为逐条评估：AndroidX 由 Google 维护、Central 签名，传递依赖与判据 ③ 需实测），不过则绕法是退回 `Intent.ACTION_VIEW` 或让消费方传「打开 URL」的回调、库只接管回跳一半；②库要带 Activity + manifest，「库不含 UI」这条边界需要更精确的措辞（Activity 属平台集成，不是 UI）；③iOS 的 `ASWebAuthenticationSession` 自带取消回调，与 Android 机制完全不同，两端各写一套。
 
   **决策取决于第 5 步**：Tono-Android 确定要接则下沉收益实打实；短期不接就是为假想的第二消费方付成本。
 

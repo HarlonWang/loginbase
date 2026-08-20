@@ -24,6 +24,7 @@ loginbase/                   # 本仓：TS 服务端库 + 协议契约
 │   ├── plan.md              # 实施计划（五步任务清单/验收点/版本线）
 │   ├── naming.md            # 命名讨论记录
 │   ├── protocol.md          # API 契约（唯一权威）——代码平移时落笔
+│   ├── email-identity.md    # 邮箱与身份锚点：**接入方必读**（GitHub 邮箱模型 / 为何不该拿邮箱找号 / 业界做法）
 │   └── logto-替换方案-调研.md # 背景调研（自 TrendingProjects 迁入）
 └── README.md
 
@@ -54,5 +55,10 @@ Kotlin 包    wang.harlon.loginbase
 
 ## 设计红线
 
-- 依赖最小集：服务端 hono + jose（+ zod-validator），客户端 ktor-client-core + kotlinx-serialization-json + kotlinx-coroutines-core。auth 库是供应链攻击的最高价值目标，每加一个依赖都要过一遍这个念头
+- 依赖准入（2026-08-18 由「依赖最小集」改判）：auth 库是供应链攻击的最高价值目标，所以**审查来源，而不是一味压数量**。放行三类，其余一律先停下来问值不值：
+  1. 现有基座——服务端 hono + jose（+ zod-validator），客户端 ktor-client-core + kotlinx-serialization-json + kotlinx-coroutines-core；
+  2. 业界权威库——四条判据全满足：① 生态事实标准，组织或多人维护、发布节奏稳定；② 发布带 provenance / trusted publishing（npm）或签名（Maven Central）；③ 传递依赖 ≤ 2 且同样满足 ①；④ 无安装脚本；
+  3. 自己的库（`HarlonWang/*`）——同样走 trusted publishing 发布，在库里优先声明为 peerDependency，由消费方定版本
+
+  仍然拒绝：为省几十行代码的工具包、单人维护的新包或小众包、运行时联网或带安装脚本的包、为一个功能拖进整个框架的包。版本钉死 + lockfile + provenance 不变
 - 协议变更：服务端实现 + `docs/protocol.md` 同一个 commit，并在 `loginbase-kt` 仓开跟进 issue，客户端版本落地前不关（2026-08-13 由 monorepo 三位一体改判，理由见 design.md）
