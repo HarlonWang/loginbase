@@ -363,17 +363,18 @@
 
 1. ✅ **库 1.3.0 已发布**（2026-08-14，PR #7 → tag → CI → OIDC，provenance 正常）：`resolveTemplates` 重写（三条规则 + 支持集 + 部件合并）、`fallbackLocale` 改名、`ctx` 化模板签名、内置表化、配置告警、`/code/send` 读 locale、`onEvent` 记 locale；`protocol.md` 同 commit 落 1.3.0。测试 87 → 116。
    > 执行实录：**Sourcery 本周额度用尽（`weekly rate limit`），该 PR 无 AI 审查**，改为自审，抓到 `templates` 里归一化认不出的键（如 `"中文"`）会被索引静默丢掉——语法合法却永不命中的死配置，补 `invalid_locale_key` 告警。三条核心规则做过反向验证（支持集放宽 / 一步截主语言 / 跨语言取件，还原任一即转红）；其中「一步截主语言」第一次**没转红**，说明测试没真区分，补 `zh-Hant-TW` 三级标签用例才有效——两级标签在两种实现下结果相同，是个会骗过 review 的盲区。registry 冒烟用**真包**跑了 14 条断言（含「旧键 `locale` 不再生效」的 BREAKING 实证）。
-2. ✅ **客户端 loginbase-kt 已实现、未发版**（2026-08-14，[PR #4](https://github.com/HarlonWang/loginbase-kt/pull/4) 合并）：`localeProvider` + `platformLanguageTag()` expect/actual + 契约测试（23 → 33，含 host test 用 `Locale.ROOT` 构造「系统给不出语言」）；`PROTOCOL_VERSION` 1.3.0。**发版仍卡在 Maven Central 四个 secrets**（见第 4 步任务 1），故跟进 [issue #3](https://github.com/HarlonWang/loginbase-kt/issues/3) 按纪律**保持打开**（PR 正文的 `closes` 误关过一次，已重开）。
+2. ✅ **客户端 loginbase-kt 已实现并已发版**（实现 2026-08-14，[PR #4](https://github.com/HarlonWang/loginbase-kt/pull/4) 合并；发版 2026-08-15 `0.1.0` / 08-17 `0.1.1`，Maven Central）：`localeProvider` + `platformLanguageTag()` expect/actual + 契约测试（23 → 33，含 host test 用 `Locale.ROOT` 构造「系统给不出语言」）；`PROTOCOL_VERSION` 1.3.0。当时发版卡在 Maven Central 四个 secrets（见第 4 步任务 1），跟进 [issue #3](https://github.com/HarlonWang/loginbase-kt/issues/3) 按纪律保持打开（PR 正文的 `closes` 误关过一次，已重开）——**secrets 已配、库已发版，该 issue 已关闭**。
 3. ✅ **消费方已上线**（2026-08-14，[PR #36](https://github.com/HarlonWang/github-ai-trending-api/pull/36) 合并即自动部署生产）：依赖钉死 `1.3.0`（不用 caret——配置 BREAKING 会随 minor 发，`^` 不再等于「可安全自动升级」）、删掉 `locale: 'zh'` 且**不配 `fallbackLocale`**、新增 5 个测试把断言落在**实际发给 Resend 的 subject** 上。TrendingAI 客户端随下一次发版自然获得 G2 能力（库默认自动传，**客户端零代码改动**）。
    > **反向验证推翻了一个原以为的风险**：单纯留着旧键 `locale: 'zh'` 是**无害**的（键被忽略、兜底落到库内置 en，恰好是想要的结果）；真正会退化的是**把旧值照搬到新键** `fallbackLocale: 'zh'`（3 个测试转红）。故升级动作的重点不是「别忘了改名」，而是「重新决定兜底语言应该是什么」。
 4. **仅顺序 B 需要**：观察 `locale.fallback` 占比，G1 退场后删掉 `fallbackLocale: 'zh'`。顺序 A 下这一批不存在。
+5. ✅ **生产端到端已验**（2026-08-20）：**中、英两种语言各走一遍真实发信，收到的邮件语言与 App 显示语言一致，结果正确**。这是这套体系唯一无法靠测试替代的一环——库内测试断言的是模板渲染、客户端测试断言的是请求体字段，而「App 语言 → 请求 `locale` → 服务端选模板 → 收件箱里那封信」整条链只有真发一封才算数。至此邮件语言与模板体系全部收尾。
 
 **验收与测试**：
 
 - 库内：三条规则的组合矩阵（内置有/无 × 消费方无/部分/齐全）；逐级砍子标签（`zh-Hans-CN`/`zh_CN`/`en-GB`/`fr`/`zh-Hant`）；不完整配置告警的存在性；**`en + brand=Tono` 逐字节锁定测试必须继续绿**（第 2 步立的等价性证明，是这次重构的安全网）。
 - 补两个**从未上过生产的组合**快照：`en + brand=TrendingAI`、**`zh + brand=Tono`**（后者随第 5 步生效，见下）。
 - 客户端三条：①不配 provider → 请求体含 `locale` 且为 BCP 47 形态；②`localeProvider = { null }` → 字段**仍在**，值为平台语言（`null` = 没意见，回落而非关闭）；③平台语言也取不到时 → 字段**缺席**（而非 `null`）。
-- 端到端：App 切英文 → 收英文邮件；切中文 → 收中文；传 `fr` → 收兜底语言且 `onEvent` 有 `fallback: true`。
+- 端到端：App 切英文 → 收英文邮件；切中文 → 收中文（**中英两条 2026-08-20 已在生产实测通过**，见上方批次 5）；传 `fr` → 收兜底语言且 `onEvent` 有 `fallback: true`（未实测）。
 
 ### 升级过渡 UX（C 方案，2026-08-12 定）
 

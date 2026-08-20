@@ -89,7 +89,7 @@ const auth = createLogin({
 
 原红线只有「数量」一个杠杆，改判后按**来源**审查：现有基座、业界权威库（四条客观判据）、自己的库（`HarlonWang/*`，优先 peerDependency）三类放行，其余仍要停下来问值不值。判据全文见 README「设计红线」。
 
-**改判的触发点**是埋点底座（见 `TrendingProjects/埋点自建-调研.md`）：登录事件要与客户端埋点合到一张表，最直接的做法是 loginbase 直接用埋点库，旧红线却把它逼成「loginbase 加 `stats.sink` 配置项、消费方在自己的 Worker 里手工注入 writer」的绕法——多一段容易漏配又静默失效的接线（同类事故已有一次：消费方升级包但没跑 migration，统计静默不落库），而安全上并无收益：那是自己的库、同样走 trusted publishing 发布。
+**改判的触发点**是埋点底座（调研见 `TrendingProjects/埋点自建-调研.md`；**2026-08-20 已落地为实物**：`HarlonWang/eventbase` + `eventbase-kt`，npm `eventbase@0.0.2` / Maven `wang.harlon:eventbase-kt@0.1.0`，与本仓同构的双仓结构，TrendingAI 已用它替换 Aptabase。**但 loginbase 至今未依赖它**——改判解除的是禁令，合表接线本身仍未做，要做时按准入第 3 类走）：登录事件要与客户端埋点合到一张表，最直接的做法是 loginbase 直接用埋点库，旧红线却把它逼成「loginbase 加 `stats.sink` 配置项、消费方在自己的 Worker 里手工注入 writer」的绕法——多一段容易漏配又静默失效的接线（同类事故已有一次：消费方升级包但没跑 migration，统计静默不落库），而安全上并无收益：那是自己的库、同样走 trusted publishing 发布。
 
 判据里两条容易被忽略的用意：**「业界权威」必须配可当场查证的硬判据**（维护者数量、npm provenance 徽章、`npm ls` 的传递依赖、有无 install 脚本），否则这四个字等于没规则，每次都能自我说服；**自己的库优先 peerDependency**，是因为自己的库在信任维度更高、在版本维度风险反而更大——写成普通 dependency 时消费方 Worker 里可能同时存在库拖来的一份和自己直装的一份，两份各写各的表。
 

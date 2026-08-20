@@ -2,7 +2,7 @@
 
 多 App 共用的登录底座（邮箱验证码 + 社交 OAuth + 会话管理）。**开工前先读 README.md 和 `docs/design.md`**——路线选择、API 草案、分发方式、落地五步全在里面；服务端完整技术方案（公共 API、协议草案、会话模型、平移映射）见 `docs/server-design.md`；登录统计的指标口径与数据模型见 `docs/stats-design.md`；**接入方必读 `docs/email-identity.md`**（GitHub 邮箱模型、为何不该拿邮箱当身份锚点）；实施进度与历次读数在 `docs/plan.md`；命名相关看 `docs/naming.md`（含死名单，别重新讨论命名）；项目由来看 `docs/logto-替换方案-调研.md`。
 
-## 关联仓库（本仓库外的源头与消费方）
+## 关联仓库（本仓库外的源头、消费方与姊妹底座）
 
 | 路径 | 角色 |
 |---|---|
@@ -11,6 +11,8 @@
 | `/Users/wanghl/loginbase-kt`（`HarlonWang/loginbase-kt`） | **姊妹仓**（2026-08-13 已建）：KMP 客户端库，独立版本线与 CI；协议以本仓 `docs/protocol.md` 为唯一权威，客户端仓不留副本。协议变更须在该仓开跟进 issue（现有 [#1](https://github.com/HarlonWang/loginbase-kt/issues/1) 跟进 1.2.0 的 link 流程） |
 | `/Users/wanghl/TrendingProjects/TrendingAI` | 消费方（第 4 步）：KMP 客户端；`androidApp/.../LogtoAuthManager.kt` 里的竞态防御经验是 loginbase-kt 的需求清单 |
 | `/Users/wanghl/TonoProjects/Tono-Android` | 消费方（第 5 步，不阻塞） |
+| `/Users/wanghl/eventbase`（`HarlonWang/eventbase`） | **姊妹底座**（非本仓依赖）：自建埋点，与本仓同构——服务端库跑在各 App 自己的 Worker、数据落各自 D1、协议只住服务端仓、KMP 客户端住姊妹仓。npm `eventbase@0.0.2`。它是 2026-08-18 依赖准入改判的触发点（登录事件与客户端埋点合表），但**loginbase 目前并未依赖它**，合表接线尚未做 |
+| `/Users/wanghl/eventbase-kt`（`HarlonWang/eventbase-kt`） | 埋点 KMP 客户端，`wang.harlon:eventbase-kt` 0.1.0 已发 Maven Central（2026-08-20）；TrendingAI 已接入（替换 Aptabase） |
 
 ## 铁律
 
