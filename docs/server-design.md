@@ -243,7 +243,7 @@ interface EmailConfig {
 
 **演进纪律（新增）**：**库内置新增一门语言，是接入方可观察的行为变更**——某消费方原本给 `ja` 只写了 subject（整封回落 en + 告警），库内置加了 ja 之后，同一份配置变成"消费方 subject + 内置 ja 正文"，告警也消失。方向是好的，但它静默发生。同理将来加 `zh-Hant`：今天传 `zh-Hant` 收简体的用户，会在库升级后无改动地开始收繁体。故：**内置新增语言按 minor 发布，release note 必须列出「新增语言 X；若你的 `templates` 里有 X 的部分覆盖，其行为将从整体回落变为合并」**。它不是协议变更（wire 未动），但属同一类需要纪律的东西。
 
-**明确不做**：模板引擎（Liquid/Handlebars，撞依赖最小集）、远程模板 URI（Kratos 那套）、把语言偏好存进用户档案（撞「不存用户档案」的既定边界）。**我们的模板是纯 TS 函数**——Kratos 要靠 go template 嵌套、Auth0 要靠 Liquid 条件才能拿到的表达力，我们零依赖天生就有，设计应顺着这个优势走，而不是模仿字符串模板体系。
+**明确不做**：模板引擎（Liquid/Handlebars，撞依赖准入的「为一个功能拖进整个框架」）、远程模板 URI（Kratos 那套）、把语言偏好存进用户档案（撞「不存用户档案」的既定边界）。**我们的模板是纯 TS 函数**——Kratos 要靠 go template 嵌套、Auth0 要靠 Liquid 条件才能拿到的表达力，我们零依赖天生就有，设计应顺着这个优势走，而不是模仿字符串模板体系。
 
 **业界对照（2026-08-14 查证）**：
 
@@ -362,7 +362,7 @@ test/             # vitest + @cloudflare/vitest-pool-workers
 - JWT secret 每 App 独立（token 不跨 App 互认，账号不互通的技术保证）；secret 轮换 = 全员重新登录，`kid` 双 secret 平滑过渡列入将来项。
 - 吊销延迟 ≤ access TTL（1h）为已声明的模型代价；`DELETE /sessions*` 只终结 refresh 能力。
 - 救活护栏（1h/3 次）封死「盗用方与本人交替刷新」的无限救活通道。
-- 供应链：依赖最小集 + lockfile + trusted publishing/provenance（铁律 1 与分发节）。
+- 供应链：依赖准入 + lockfile + trusted publishing/provenance（铁律 1 与分发节）。
 
 ## 已知边界与将来项
 

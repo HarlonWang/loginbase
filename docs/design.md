@@ -85,11 +85,21 @@ const auth = createLogin({
 - **与业界的一处有意分歧**：主流是**定时器提前刷**（Supabase autoRefresh、MSAL 近过期即刷），本库是**纯 401 驱动的被动刷**。因为主动刷要读 `exp` → 依赖设备时钟，正是 Logto 时代「模拟器慢 63 秒直接登录失败」的病灶。用一次多余往返换掉整类时钟偏差问题。
 - 消费方：TrendingAI shared（commonMain，iOS 白拿）、Tono-Android（android target）。
 
+## 依赖准入（2026-08-18 由「依赖最小集」改判）
+
+原红线只有「数量」一个杠杆，改判后按**来源**审查：现有基座、业界权威库（四条客观判据）、自己的库（`HarlonWang/*`，优先 peerDependency）三类放行，其余仍要停下来问值不值。判据全文见 README「设计红线」。
+
+**改判的触发点**是埋点底座（见 `TrendingProjects/埋点自建-调研.md`）：登录事件要与客户端埋点合到一张表，最直接的做法是 loginbase 直接用埋点库，旧红线却把它逼成「loginbase 加 `stats.sink` 配置项、消费方在自己的 Worker 里手工注入 writer」的绕法——多一段容易漏配又静默失效的接线（同类事故已有一次：消费方升级包但没跑 migration，统计静默不落库），而安全上并无收益：那是自己的库、同样走 trusted publishing 发布。
+
+判据里两条容易被忽略的用意：**「业界权威」必须配可当场查证的硬判据**（维护者数量、npm provenance 徽章、`npm ls` 的传递依赖、有无 install 脚本），否则这四个字等于没规则，每次都能自我说服；**自己的库优先 peerDependency**，是因为自己的库在信任维度更高、在版本维度风险反而更大——写成普通 dependency 时消费方 Worker 里可能同时存在库拖来的一份和自己直装的一份，两份各写各的表。
+
+保持不变：版本钉死 + lockfile + trusted publishing/provenance。放宽的是准入数量，不是来源审查——供应链完整性仍是本库第一位的非功能属性。
+
 ## 分发
 
 - **服务端**：npm registry 正式发包 `loginbase`（裸名，无 scope），tag 触发 CI 发布，用 npm trusted publishing（GitHub Actions OIDC，免长期 token，带 provenance）。
   - 初版方案曾选 git-tag 依赖（`github:HarlonWang/loginbase#semver:^1.0.0`），理由是零发布设施；2026-08-10 改为 registry，前提变化是已有 npm 账号与发包经验，「零设施」优势缩水（KMP 侧本就要 CI，npm 只是同一 tag 触发下多一个 job），而 registry 的收益对 auth 库全踩在点上：
-    1. **版本不可变**——registry 同一版本号不能重发不同内容，git tag 可被 force 移动；对 auth 库是供应链完整性属性，与依赖最小集红线同源；
+    1. **版本不可变**——registry 同一版本号不能重发不同内容，git tag 可被 force 移动；对 auth 库是供应链完整性属性，与依赖准入铁律同源；
     2. **解除「仓库必须 public」硬约束**——git 依赖时代 Workers Builds 云端装依赖无凭据、私有仓库必失败；registry 之后 public 与否降为普通偏好；
     3. **构建产物两难提前消解**——git 依赖发编译产物要么消费方 `prepare` 现场构建（慢、flaky），要么提交 `dist/` 进仓库；registry 发布时构建一次，消费方拿现成 tarball；
     4. **安装干净**——只拉 `files` 筛过的 tarball，不 clone 整个仓库。
@@ -103,7 +113,7 @@ const auth = createLogin({
 在 Cloudflare Workers 底座上 TS 是一等公民，auth 负载纯 I/O 密集，语言性能无关；Hono/jose 均 runtime 无关，真正的锁定在 D1/KV binding 而非语言。真实存在的局限及对策：
 
 1. 类型安全只在编译期——运行时边界（请求 JSON、D1 行）用 zod/手动校验兜底；
-2. npm 供应链是 auth 代码最大威胁面——依赖钉死最小集、lockfile 锁版本；
+2. npm 供应链是 auth 代码最大威胁面——依赖按准入判据审查来源、钉死版本 + lockfile；
 3. 生态时尚漂移——只依赖低层稳定库，库 API 面冻结后漂移在库内消化；
 4. 跨语言逻辑不可复用——auth 本是协议边界，客户端 SDK 任何服务端语言都要单独写，非 TS 特有。
 
