@@ -27,10 +27,10 @@
 
 ## 当前状态（2026-08-20）
 
-**第 0~3 步完成；第 4 步已上生产但客户端库未发版；第 5 步未启动。** 本节只记版本号、阻塞项与最新结论，**细节一律不复述**——PR 号、测试数、每次读数的明细都在 `docs/plan.md` 对应小节，那里是唯一档案。
+**第 0~4 步完成；第 5 步（Tono-Android 换用）未启动。** 本节只记版本号、阻塞项与最新结论，**细节一律不复述**——PR 号、测试数、每次读数的明细都在 `docs/plan.md` 对应小节，那里是唯一档案。
 
-- **线上版本**：服务端 `loginbase@1.4.0`（1.3.0 = 语言与模板体系，1.4.0 = 登录统计）；两个消费方 github-ai-trending-api 与 TrendingAI（App 1.3.0，2026-08-18 发版）均已在生产。
-- **阻塞项**：① `loginbase-kt` 未发 Maven Central，卡在四个 secrets 未配（值在 `HarlonWang/secrets` 的 `maven-publishing/`，需本人操作），TrendingAI 现经 composite build 吃本地源码，`local.properties` 的 `loginbase-kt.dir` 是必需配置；② **消费方升级到 1.4.0 必须执行 migration 0002**，否则统计静默不落库（登录不受影响，只有一次 `stats_unavailable` 告警）。
+- **线上版本**：服务端 `loginbase@1.4.0`（1.3.0 = 语言与模板体系，1.4.0 = 登录统计）；客户端 `wang.harlon:loginbase-kt` **0.1.1 已在 Maven Central**（0.1.0 于 08-15、0.1.1 于 08-17），含 `loginbase-kt-browser` 可选模块。两个消费方 github-ai-trending-api 与 TrendingAI（App 1.3.0，08-18 发版）均已在生产，TrendingAI 已改吃正式 Maven 依赖（version catalog 钉 0.1.1，本地源码双轨为约定驱动）。
+- **接入注意**：消费方升级到 1.4.0 **必须执行 migration 0002**，否则统计静默不落库（登录不受影响，只有一次 `stats_unavailable` 告警）。
+- **OAuth 回跳已下沉到客户端库**（原「待讨论」第 ④ 项已落地，loginbase-kt PR #8/#10/#11）：一期收进 commonMain 且零新依赖，二期出 `browser` 可选模块（中转页 + 管理页 + CCT/系统浏览器 + Auth Tab 优先级）。消费方只注入一个 scheme placeholder，不再自写 intent-filter。
 - **最新读数**（08-20 第二次三源交叉，见 plan.md「第二次读数」）：新轨功能面健康、存量映射有生产实证；但日活设备渗透率仅 3.4%，**Logto 退役远未到评估窗口**。email 哨兵 92（基线 94，只应降不应升）。
-- **未拍板**：单飞 refresh、Android App Links、OAuth 回跳是否下沉到 loginbase-kt（plan.md 第 4 步「待讨论」）；link 错误回跳带 `mode=link`（协议 minor）；邮箱单值锚点导致的重复账号（属消费方业务规则，见 `docs/email-identity.md`）。
-- **未验证**：邮件语言的生产端到端——要真发一封验证码邮件才能验。
+- **开放项**：loginbase-kt [#7](https://github.com/HarlonWang/loginbase-kt/issues/7)（verifyCode/exchangeOtc 与并发登出的竞态：登出后会被建立会话）、[#9](https://github.com/HarlonWang/loginbase-kt/issues/9)（CI 偶发失败）；Android App Links 仍未拍板；link 错误回跳带 `mode=link`（协议 minor，未定案）；邮箱单值锚点导致的重复账号（属消费方业务规则，见 `docs/email-identity.md`）。
