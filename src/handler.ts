@@ -184,11 +184,20 @@ export function createAuthApp<TEnv>(
     const code = trimmedField(body.code);
 
     // 演示账号：绕开 KV——不焚码、不计错误尝试，故可重复使用、永不过期。
-    // 码不对则**继续走常规路径**，那条路上 readCode 必然为空（send 从没存过），
-    // 返回 code_expired，不额外泄露「这个邮箱是演示账号」
+    //
+    // **码不对也不许落到下面的常规路径**（PR #9 审查抓出）：那里 readCode 未必为空——
+    // 启用 demoAccount 之前这个邮箱可能正常发过码，KV 里有残留。一旦读到，错码就会返回
+    // invalid_code / too_many_attempts（而非契约承诺的、与普通邮箱无从区分的
+    // code_expired），且 incrementAttempts / deleteCode 会**改动那条残留记录**。
+    // 所以演示邮箱在此一次处理干净，两条出口都不碰 KV。
     const demo = cfg(c).demoAccount;
-    if (demo && isDemoEmail(cfg(c), email) && code === demo.code) {
-      return await completeVerifiedLogin(c, email, { demo: true });
+    if (demo && isDemoEmail(cfg(c), email)) {
+      if (code === demo.code) {
+        return await completeVerifiedLogin(c, email, { demo: true });
+      }
+      // 响应与「未发过码的普通邮箱」逐字节一致；demo 标记只进服务端事件，不出网
+      track(c, { event: "code_verify", outcome: "code_not_found", meta: { demo: true } });
+      return c.json({ error: "code_expired" }, 400);
     }
 
     const stored = await readCode(cfg(c).kv, email);

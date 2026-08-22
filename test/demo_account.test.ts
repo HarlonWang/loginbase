@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:workers";
 import { createLogin } from "../src/index";
 import { tonoLikeOnVerified, initDb, wipeKv } from "./helpers";
+import { storeCode, readCode } from "../src/code";
 
 const DEMO_EMAIL = "store-review@example.com";
 const DEMO_CODE = "424242";
@@ -93,6 +94,26 @@ describe("演示账号（应用商店审核）", () => {
       code: DEMO_CODE,
     });
     expect(ok.status).toBe(200);
+  });
+
+  it("演示邮箱输错码时**完全不碰 KV**——不读、不计错误、不删残留的普通验证码", async () => {
+    // 现实场景：启用 demoAccount 之前，这个邮箱正常走过一次登录，KV 里留着码。
+    // 若错码落到常规路径，会返回 invalid_code / too_many_attempts（泄露此邮箱不一般），
+    // 并把这条记录改掉甚至删掉（PR #9 审查抓出的那条）
+    await storeCode(env.EMAIL_CODES, DEMO_EMAIL, "111111");
+
+    // 错 6 次——常规路径第 5 次就会 429 并焚码
+    for (let i = 0; i < 6; i++) {
+      const bad = await post(withDemo, "/auth/code/verify", {
+        email: DEMO_EMAIL,
+        code: "000000",
+      });
+      expect(bad.status, `第 ${i + 1} 次`).toBe(400);
+      expect(await bad.json()).toEqual({ error: "code_expired" });
+    }
+
+    const survived = await readCode(env.EMAIL_CODES, DEMO_EMAIL);
+    expect(survived?.code, "残留的普通码不该被删或改").toBe("111111");
   });
 
   it("码不对时回落常规路径的 code_expired，不泄露「这是演示账号」", async () => {
