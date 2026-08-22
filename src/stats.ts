@@ -4,6 +4,7 @@
 // 未必已执行 migration 0002，所以写入失败是预期内的常态：一律吞掉、异步写、
 // 首次失败告警一次。登录成功与否与本模块无关。
 import type { LoginConfig } from "./config.js";
+import { DEMO_FLAG } from "./middleware.js";
 import { logEvent } from "./log.js";
 
 export interface StatEvent {
@@ -36,6 +37,17 @@ export interface TrackContext {
   req: { raw: Request };
   /** Hono 在无 ExecutionContext 时访问此属性会抛，故所有读取都包在 try 内 */
   executionCtx?: ExecutionContext;
+  /** Hono 的 context variable 读取器；演示账号靠它给本次请求的事件打标 */
+  get?: (key: string) => unknown;
+}
+
+/** 本次请求是否走的演示账号（标记由 demo.ts 在中间件里种下） */
+function isDemoRequest(c: TrackContext): boolean {
+  try {
+    return c.get?.(DEMO_FLAG) === true;
+  } catch {
+    return false;
+  }
 }
 
 interface Geo {
@@ -126,9 +138,12 @@ async function writeEvent(
  * 再异步写自己的表。两条路径并行——onEvent 是给消费方的，不被库劫持去写库表。
  */
 export function createTracker<TEnv>(getConfig: (env: TEnv) => LoginConfig) {
-  return (c: TrackContext, e: StatEvent): void => {
+  return (c: TrackContext, raw: StatEvent): void => {
     const cfg = getConfig(c.env as TEnv);
     const onEvent = cfg.onEvent ?? logEvent;
+    // 演示账号的请求由 demo.ts 打标，在此统一注入：委托给常规 handler 之后
+    // 它发的 code_verify(ok) 与 login 也才带得上，否则审核流量剔不干净
+    const e = isDemoRequest(c) ? { ...raw, meta: { ...raw.meta, demo: true } } : raw;
 
     onEvent({
       event: e.event,

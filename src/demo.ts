@@ -5,7 +5,7 @@ import type { Context, Hono } from "hono";
 import { trimmedField } from "./body.js";
 import { storeCode } from "./code.js";
 import type { LoginConfig } from "./config.js";
-import type { AuthVariables } from "./middleware.js";
+import { DEMO_FLAG, type AuthVariables } from "./middleware.js";
 import type { createTracker } from "./stats.js";
 
 type DemoContext = Context<{ Variables: AuthVariables }>;
@@ -44,7 +44,8 @@ export function registerDemoAccount<TEnv>(
     const { email } = await readEmailAndCode(c as DemoContext);
     if (!hitsDemo(config, email)) return next();
 
-    track(c as DemoContext, { event: "code_sent", meta: { demo: true } });
+    c.set(DEMO_FLAG, true);
+    track(c as DemoContext, { event: "code_sent" });
     // 必须与常规成功响应逐字节相同，否则一次请求就能认出演示账号
     return c.json({ cooldownSeconds: 60 }, 200);
   });
@@ -57,14 +58,14 @@ export function registerDemoAccount<TEnv>(
     const { email, code } = await readEmailAndCode(c as DemoContext);
     if (!hitsDemo(config, email)) return next();
 
+    // 一命中就打标，两条出口都覆盖；放行那条尤其要有——常规 handler 之后发的
+    // code_verify(ok) 与 login 也得带 demo，否则审核员的成功登录会混进真实漏斗
+    c.set(DEMO_FLAG, true);
+
     if (code !== demo.code) {
       // 不能放行：常规路径的 readCode 未必为空（启用前这个邮箱可能发过码），
-      // 读到就会返回 invalid_code 并改动那条残留记录。demo 标记只进事件、不出网。
-      track(c as DemoContext, {
-        event: "code_verify",
-        outcome: "code_not_found",
-        meta: { demo: true },
-      });
+      // 读到就会返回 invalid_code 并改动那条残留记录
+      track(c as DemoContext, { event: "code_verify", outcome: "code_not_found" });
       return c.json({ error: "code_expired" }, 400);
     }
 

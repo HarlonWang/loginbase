@@ -69,12 +69,59 @@ describe("演示账号（应用商店审核）", () => {
       });
 
       expect(demoRes.status).toBe(normalRes.status);
-      expect(await demoRes.json()).toEqual(await normalRes.json());
+      // 比 text() 而非 json()：后者会吃掉键序/空格差异，而契约说的是逐字节
+      expect(await demoRes.text()).toBe(await normalRes.text());
       // 顺带钉死：演示邮箱那条**没有**触发发信，普通邮箱那条有
       expect(fetchSpy).toHaveBeenCalledOnce();
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+
+  it("成功登录的事件也带 meta.demo——否则审核流量剔不出登录漏斗", async () => {
+    const events: Record<string, unknown>[] = [];
+    const app = createLogin<Cloudflare.Env>((e) => ({
+      db: e.DB,
+      kv: e.EMAIL_CODES,
+      jwt: { secret: e.JWT_SECRET },
+      email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+      demoAccount: { email: DEMO_EMAIL, code: DEMO_CODE },
+      onVerified: ({ email }) => tonoLikeOnVerified(email),
+      onEvent: (ev) => events.push(ev),
+    })).app;
+
+    const res = await post(app, "/auth/code/verify", {
+      email: DEMO_EMAIL,
+      code: DEMO_CODE,
+    });
+    expect(res.status).toBe(200);
+
+    // 这两条是常规 handler 在 next() 之后发的——标记要能穿过委托边界
+    const ok = events.find((e) => e.event === "code_verify" && e.outcome === "ok");
+    const login = events.find((e) => e.event === "login");
+    expect(ok?.demo, "code_verify(ok) 应带 demo").toBe(true);
+    expect(login?.demo, "login 应带 demo").toBe(true);
+  });
+
+  it("普通登录的事件不带 demo——别把标记糊到所有人身上", async () => {
+    const events: Record<string, unknown>[] = [];
+    const app = createLogin<Cloudflare.Env>((e) => ({
+      db: e.DB,
+      kv: e.EMAIL_CODES,
+      jwt: { secret: e.JWT_SECRET },
+      email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+      demoAccount: { email: DEMO_EMAIL, code: DEMO_CODE },
+      onVerified: ({ email }) => tonoLikeOnVerified(email),
+      onEvent: (ev) => events.push(ev),
+    })).app;
+
+    await storeCode(env.EMAIL_CODES, "normal@example.com", "222222");
+    const res = await post(app, "/auth/code/verify", {
+      email: "normal@example.com",
+      code: "222222",
+    });
+    expect(res.status).toBe(200);
+    expect(events.find((e) => e.event === "login")?.demo).toBeUndefined();
   });
 
   it("固定码可直接换会话，连 send 都不必先调", async () => {
