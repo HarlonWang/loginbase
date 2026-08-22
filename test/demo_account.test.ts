@@ -73,9 +73,24 @@ describe("演示账号", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "code_expired" });
 
-    // send 会真实发信、码是随机的——固定码大概率验不过（若撞中也只是 1/1e6）
+    // send 会真实发信、码是随机的
     await post(app, "/auth/code/send", { email: DEMO_EMAIL });
     expect(fetchSpy).toHaveBeenCalledOnce();
+
+    // 发码后拿固定码去验也进不来——确证未配置时不存在固定码路径。
+    // 随机码有 1/1e6 概率恰好撞上固定码，撞上时跳过断言以免假红
+    const stored = JSON.parse(
+      (await env.EMAIL_CODES.get(`code:${DEMO_EMAIL}`)) ?? "null"
+    ) as { code: string } | null;
+    expect(stored?.code).toMatch(/^\d{6}$/);
+    if (stored?.code !== DEMO_CODE) {
+      const rejected = await post(app, "/auth/code/verify", {
+        email: DEMO_EMAIL,
+        code: DEMO_CODE,
+      });
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toEqual({ error: "invalid_code" });
+    }
   });
 
   it("send：200 且响应与常规相同、不发信、KV 里存的就是固定码", async () => {
