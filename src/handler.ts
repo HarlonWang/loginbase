@@ -31,7 +31,7 @@ import { createAuthMiddleware, type AuthVariables } from "./middleware.js";
 import { logEvent } from "./log.js";
 import { createTracker, type StatEvent } from "./stats.js";
 import { trimmedField } from "./body.js";
-import { demoAccountCode } from "./demo_account.js";
+import { matchDemoAccount } from "./demo_account.js";
 import { registerGithubOauth } from "./plugins/github.js";
 import type { LoginConfig, VerifiedResult } from "./config.js";
 
@@ -63,8 +63,8 @@ export function createAuthApp<TEnv>(
     }
 
     // 演示账号（见 demo_account.ts）：码为固定值且不真实发信，其余与常规一致。
-    // 判定放在限流之前，撞限流的演示流量才带得上 demo 标
-    const demoCode = demoAccountCode(cfg(c), raw);
+    // 解析放在限流之前，撞限流的演示流量才带得上 demo 标
+    const demo = matchDemoAccount(cfg(c), raw);
 
     const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
     const rl = await checkSendRateLimit(cfg(c).kv, raw, ip);
@@ -74,7 +74,7 @@ export function createAuthApp<TEnv>(
       track(c, {
         event: "rate_limited",
         outcome: rl.layer,
-        meta: { endpoint: "code_send", ...(demoCode !== null ? { demo: true } : {}) },
+        meta: { endpoint: "code_send", ...(demo ? { demo: true } : {}) },
       });
       return c.json(
         { error: "too_many_requests", retryAfterSeconds: rl.retryAfterSeconds },
@@ -82,11 +82,11 @@ export function createAuthApp<TEnv>(
       );
     }
 
-    const code = demoCode ?? generateCode();
+    const code = demo?.code ?? generateCode();
     const emitEvent = emit(c);
     warnEmailConfigOnce(cfg(c).email, emitEvent);
     const locale = resolveEmailLocale(cfg(c).email, body.locale);
-    if (demoCode === null) {
+    if (demo === null) {
       try {
         await sendCodeEmail(cfg(c).email, raw, code, locale.locale);
       } catch (err) {
@@ -100,7 +100,7 @@ export function createAuthApp<TEnv>(
     track(c, {
       event: "code_sent",
       meta: {
-        ...(demoCode !== null ? { demo: true } : {}),
+        ...(demo ? { demo: true } : {}),
         locale: {
           resolved: locale.locale,
           ...(locale.requested ? { requested: locale.requested } : {}),
@@ -123,7 +123,7 @@ export function createAuthApp<TEnv>(
 
     // 演示账号在 verify 无任何行为分叉；仅给事件补 meta.demo，
     // 否则审核员的登录会混进真实登录漏斗（code_verify 不带 userId，事后剔不掉）
-    const isDemo = demoAccountCode(cfg(c), email) !== null;
+    const isDemo = matchDemoAccount(cfg(c), email) !== null;
     const t = (e: StatEvent) =>
       track(c, isDemo ? { ...e, meta: { ...e.meta, demo: true } } : e);
 
