@@ -5,6 +5,11 @@ import { env } from "cloudflare:workers";
 import { createLogin } from "../src/index";
 import { tonoLikeOnVerified, initDb, wipeKv } from "./helpers";
 import { storeCode, readCode } from "../src/code";
+import { Hono } from "hono";
+import { registerDemoAccount } from "../src/demo";
+import { createTracker } from "../src/stats";
+import type { LoginConfig } from "../src/config";
+import type { AuthVariables } from "../src/middleware";
 
 const DEMO_EMAIL = "store-review@example.com";
 const DEMO_CODE = "424242";
@@ -162,6 +167,37 @@ describe("演示账号（应用商店审核）", () => {
       code: DEMO_CODE,
     });
     expect(res.status).toBe(200);
+  });
+
+  it("注册顺序守卫：挪到路由之后会**静默失效**，所以 handler 里那句约束不是废话", async () => {
+    // Hono 后注册的 use 拦不住已注册的 handler。这个约束只靠注释守着太脆——
+    // 挪错位置不会报错，只会让演示账号退化成一个登不进去的普通邮箱。
+    // 这条用例把「错误顺序确实会失效」钉成事实；哪天 Hono 改了行为它会转红，
+    // 提醒去掉 handler.ts 里那段约束说明。
+    const resolve = (e: Cloudflare.Env) =>
+      ({
+        db: e.DB,
+        kv: e.EMAIL_CODES,
+        jwt: { secret: e.JWT_SECRET },
+        email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+        demoAccount: { email: DEMO_EMAIL, code: DEMO_CODE },
+        onVerified: () => ({ userId: "u-order" }),
+      }) as LoginConfig;
+
+    const auth = new Hono<{ Variables: AuthVariables }>().basePath("/auth");
+    auth.post("/code/verify", (c) => c.json({ reached: "handler" }));
+    registerDemoAccount(auth, resolve, createTracker(resolve)); // 故意后注册
+
+    const res = await auth.request(
+      "/auth/code/verify",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: DEMO_EMAIL, code: DEMO_CODE }),
+      },
+      env
+    );
+    expect(await res.json()).toEqual({ reached: "handler" });
   });
 
   it("演示账号不影响普通邮箱：普通邮箱仍需真码，固定码无效", async () => {
