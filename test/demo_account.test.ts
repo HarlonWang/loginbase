@@ -1,6 +1,6 @@
 // 演示账号：应用商店审核用的固定凭据。见 LoginConfig.demoAccount。
 // 每条用例对应商店的一项硬要求，改动时别只看"能登进去"就算过。
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { createLogin } from "../src/index";
 import { tonoLikeOnVerified, initDb, wipeKv } from "./helpers";
@@ -47,10 +47,29 @@ describe("演示账号（应用商店审核）", () => {
   it("send 直接成功，且不落任何验证码到 KV——没有真实邮箱要收", async () => {
     const res = await post(withDemo, "/auth/code/send", { email: DEMO_EMAIL });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ cooldownSeconds: 0 });
 
     const keys = await env.EMAIL_CODES.list();
     expect(keys.keys).toHaveLength(0);
+  });
+
+  it("send 的响应与普通邮箱**逐字节相同**——否则一次请求就能认出演示账号", async () => {
+    // 普通邮箱那条要真发信才会 200，故与既有 send 测试一样打桩 fetch
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ id: "e1" }), { status: 200 }));
+    try {
+      const demoRes = await post(withDemo, "/auth/code/send", { email: DEMO_EMAIL });
+      const normalRes = await post(withDemo, "/auth/code/send", {
+        email: "someone-else@example.com",
+      });
+
+      expect(demoRes.status).toBe(normalRes.status);
+      expect(await demoRes.json()).toEqual(await normalRes.json());
+      // 顺带钉死：演示邮箱那条**没有**触发发信，普通邮箱那条有
+      expect(fetchSpy).toHaveBeenCalledOnce();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("固定码可直接换会话，连 send 都不必先调", async () => {

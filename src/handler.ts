@@ -66,7 +66,11 @@ export function createAuthApp<TEnv>(
     // 而那正是商店要求「随时可用、可重复使用」时要绕开的东西
     if (isDemoEmail(cfg(c), raw)) {
       track(c, { event: "code_sent", meta: { demo: true } });
-      return c.json({ cooldownSeconds: 0 }, 200);
+      // 必须与常规成功响应**逐字节相同**（含 cooldownSeconds 的 60）：这里若返回 0，
+      // 一次请求就能判定某个邮箱是不是演示账号——verify 侧费力做的「错码与普通邮箱
+      // 无从区分」会被这一个数字全盘出卖。审核员不需要重发（码固定），
+      // 显示 60 秒倒计时对他没有任何影响
+      return c.json({ cooldownSeconds: 60 }, 200);
     }
 
     const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
