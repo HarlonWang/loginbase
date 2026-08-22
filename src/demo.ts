@@ -1,10 +1,6 @@
-// 应用商店审核用的演示账号。**全部逻辑都在本文件**——handler.ts 只负责在两个
-// /code/* 路由注册之前调一次 registerDemoAccount，主流程一行不改。
-//
-// 核心手法：verify 命中演示码时，**替审核员把码写进 KV 再放行**，让常规 handler
-// 自己验过去。于是建会话、发事件、响应形状全部复用常规路径那一份代码——
-// 不存在「演示登录的会话」与「真实登录的会话」两套实现，构造上不可能漂移。
-// 将来给会话加字段（设备指纹、改 TTL、加事件），演示这条路自动跟上。
+// 应用商店审核用的演示账号，见 LoginConfig.demoAccount 与 docs/protocol.md。
+// verify 命中演示码时**替审核员把码写进 KV 再放行**，让常规 handler 自己验过去——
+// 建会话与发事件因此只有常规路径那一份实现，不会漂移。
 import type { Context, Hono } from "hono";
 import { trimmedField } from "./body.js";
 import { storeCode } from "./code.js";
@@ -33,12 +29,8 @@ async function readEmailAndCode(c: DemoContext) {
 }
 
 /**
- * 挂载演示账号中间件。
- *
- * ⚠️ **必须在 `/code/send`、`/code/verify` 两个 `auth.post` 之前调用**：Hono 里
- * 后注册的 `use` 拦不住已注册的 handler（实测），挪到后面会**静默失效**——
- * 演示账号会退化成一个登不进去的普通邮箱，而不会有任何报错。
- * 该约束由 demo_account.test.ts 的「注册顺序」用例守着。
+ * ⚠️ **必须在两个 `/code/*` 路由之前调用**：Hono 后注册的 `use` 拦不住已注册的
+ * handler，挪到后面会静默失效（不报错，演示账号直接登不进去）。有测试守着。
  */
 export function registerDemoAccount<TEnv>(
   auth: Hono<{ Variables: AuthVariables }>,
@@ -52,11 +44,8 @@ export function registerDemoAccount<TEnv>(
     const { email } = await readEmailAndCode(c as DemoContext);
     if (!hitsDemo(config, email)) return next();
 
-    // 不发信、不写 KV、不计限流。放在这里（而非常规 handler 的限流之后）正是为了
-    // 绕开「同 IP 10 次/3600s」——审核员反复试不能被挡住。
     track(c as DemoContext, { event: "code_sent", meta: { demo: true } });
-    // 与常规成功响应**逐字节相同**：若返回 0，一次请求就能认出演示账号。
-    // 审核员不需要重发（码固定），60 秒倒计时对他没有任何影响。
+    // 必须与常规成功响应逐字节相同，否则一次请求就能认出演示账号
     return c.json({ cooldownSeconds: 60 }, 200);
   });
 
@@ -69,10 +58,8 @@ export function registerDemoAccount<TEnv>(
     if (!hitsDemo(config, email)) return next();
 
     if (code !== demo.code) {
-      // **不能放行到常规路径**：那里 readCode 未必为空（启用 demoAccount 之前这个
-      // 邮箱可能正常发过码），一旦读到，错码会返回 invalid_code / too_many_attempts
-      // 而非契约承诺的 code_expired，且会改动甚至删掉那条残留记录。
-      // 响应与「未发过码的普通邮箱」逐字节一致；demo 标记只进服务端事件，不出网。
+      // 不能放行：常规路径的 readCode 未必为空（启用前这个邮箱可能发过码），
+      // 读到就会返回 invalid_code 并改动那条残留记录。demo 标记只进事件、不出网。
       track(c as DemoContext, {
         event: "code_verify",
         outcome: "code_not_found",
@@ -81,8 +68,7 @@ export function registerDemoAccount<TEnv>(
       return c.json({ error: "code_expired" }, 400);
     }
 
-    // 替审核员把码填好，其余交给常规 handler：它会 readCode 命中 → 焚码 →
-    // onVerified → 建会话 → 签 token → 发事件。焚掉无妨，下次登录再写一条。
+    // 替审核员填好码，其余交给常规 handler；它会焚掉，下次登录再写一条
     await storeCode(config.kv, email, code);
     return next();
   });

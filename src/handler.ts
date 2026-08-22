@@ -53,9 +53,7 @@ export function createAuthApp<TEnv>(
     return ttl == null ? null : Date.now() + ttl;
   };
 
-  // 演示账号（应用商店审核用，默认不存在）。**必须在下面两个 /code/* 路由之前**：
-  // Hono 里后注册的 use 拦不住已注册的 handler，挪到后面会静默失效。
-  // 全部逻辑在 demo.ts，本文件不为它保留任何分支。
+  // 演示账号（默认不存在，逻辑全在 demo.ts）。**必须在下面两个 /code/* 之前**
   registerDemoAccount(auth, getConfig, track);
 
   auth.post("/code/send", async (c) => {
