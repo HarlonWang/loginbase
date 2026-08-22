@@ -5,7 +5,7 @@ import { env } from "cloudflare:workers";
 import { createLogin } from "../src/index";
 import { tonoLikeOnVerified, initDb, wipeKv } from "./helpers";
 
-const DEMO_EMAIL = "play-review@example.com";
+const DEMO_EMAIL = "store-review@example.com";
 const DEMO_CODE = "424242";
 
 const withDemo = createLogin<Cloudflare.Env>((e) => ({
@@ -115,8 +115,10 @@ describe("演示账号（应用商店审核）", () => {
   });
 
   it("邮箱比对大小写不敏感——审核员照抄时大小写不一致也能登", async () => {
+    // 从常量派生而非另写字面量：改了 DEMO_EMAIL 却漏改这里的话，
+    // 这条会静默变成「另一个邮箱登不进去」，测不到大小写这件事
     const res = await post(withDemo, "/auth/code/verify", {
-      email: "Play-Review@Example.com",
+      email: DEMO_EMAIL.toUpperCase(),
       code: DEMO_CODE,
     });
     expect(res.status).toBe(200);
