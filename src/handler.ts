@@ -62,20 +62,26 @@ export function createAuthApp<TEnv>(
       return c.json({ error: "invalid_email" }, 400);
     }
 
+    // 演示账号（见 demo_account.ts）：码为固定值且不真实发信，其余与常规一致。
+    // 判定放在限流之前，撞限流的演示流量才带得上 demo 标
+    const demoCode = demoAccountCode(cfg(c), raw);
+
     const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
     const rl = await checkSendRateLimit(cfg(c).kv, raw, ip);
     if (!rl.allowed) {
       // 命中限流不只是滥用信号，更是「用户发不出码」的体验问题——分层记录才知道
       // 是自己手快（cooldown）还是真被挡住（email / ip 窗口）
-      track(c, { event: "rate_limited", outcome: rl.layer, meta: { endpoint: "code_send" } });
+      track(c, {
+        event: "rate_limited",
+        outcome: rl.layer,
+        meta: { endpoint: "code_send", ...(demoCode !== null ? { demo: true } : {}) },
+      });
       return c.json(
         { error: "too_many_requests", retryAfterSeconds: rl.retryAfterSeconds },
         429
       );
     }
 
-    // 演示账号（见 demo_account.ts）：码为固定值且不真实发信，其余与常规一致
-    const demoCode = demoAccountCode(cfg(c), raw);
     const code = demoCode ?? generateCode();
     const emitEvent = emit(c);
     warnEmailConfigOnce(cfg(c).email, emitEvent);

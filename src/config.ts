@@ -131,7 +131,7 @@ export interface LoginConfig {
   demoAccount?: {
     /** 比对时 trim + 转小写 */
     email: string;
-    /** 与真码同形（6 位数字），客户端才无需特判 */
+    /** 与真码同形（6 位数字），客户端才无需特判；trim 后非 6 位数字视同未配置 */
     code: string;
   };
   onVerified: OnVerified;

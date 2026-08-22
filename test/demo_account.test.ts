@@ -122,10 +122,61 @@ describe("演示账号", () => {
     expect(rerun.status).toBe(200);
   });
 
-  it("send 限流照常生效：60s 内第 2 次 → 429", async () => {
+  it("send 限流照常生效：60s 内第 2 次 → 429，且 rate_limited 事件带 demo 标", async () => {
     await post(demoApp, "/auth/code/send", { email: DEMO_EMAIL });
     const res = await post(demoApp, "/auth/code/send", { email: DEMO_EMAIL });
     expect(res.status).toBe(429);
+
+    await flushStats();
+    const limited = (await readEvents()).find((e) => e.event === "rate_limited");
+    expect(limited?.meta).toMatchObject({ endpoint: "code_send", demo: true });
+  });
+
+  it("配错的码（空串/带杂质/非 6 位）视同未配置，空码不构成免凭据登录", async () => {
+    const broken = createLogin<Cloudflare.Env>((e) => ({
+      db: e.DB,
+      kv: e.EMAIL_CODES,
+      jwt: { secret: e.JWT_SECRET },
+      email: {
+        resendApiKey: e.RESEND_API_KEY,
+        from: e.EMAIL_FROM_ADDRESS,
+        brand: "Tono",
+      },
+      demoAccount: { email: DEMO_EMAIL, code: "" },
+      onVerified: ({ email }) => tonoLikeOnVerified(email),
+    })).app;
+
+    // 演示路径不存在 → send 走常规：真实发信、码随机
+    await post(broken, "/auth/code/send", { email: DEMO_EMAIL });
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    // 不带 code 字段（会被读成空串）绝不能换到会话
+    const res = await post(broken, "/auth/code/verify", { email: DEMO_EMAIL });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_code" });
+  });
+
+  it("配置码带首尾空格 → trim 后仍可用", async () => {
+    const padded = createLogin<Cloudflare.Env>((e) => ({
+      db: e.DB,
+      kv: e.EMAIL_CODES,
+      jwt: { secret: e.JWT_SECRET },
+      email: {
+        resendApiKey: e.RESEND_API_KEY,
+        from: e.EMAIL_FROM_ADDRESS,
+        brand: "Tono",
+      },
+      demoAccount: { email: DEMO_EMAIL, code: `  ${DEMO_CODE}\n` },
+      onVerified: ({ email }) => tonoLikeOnVerified(email),
+    })).app;
+
+    await post(padded, "/auth/code/send", { email: DEMO_EMAIL });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const res = await post(padded, "/auth/code/verify", {
+      email: DEMO_EMAIL,
+      code: DEMO_CODE,
+    });
+    expect(res.status).toBe(200);
   });
 
   it("防暴破照常生效：错码计次，第 5 次即焚", async () => {

@@ -8,5 +8,8 @@ import type { LoginConfig } from "./config.js";
 export function demoAccountCode(config: LoginConfig, email: string): string | null {
   const demo = config.demoAccount;
   if (!demo || demo.email.trim().toLowerCase() !== email) return null;
-  return demo.code;
+  const code = demo.code.trim();
+  // 配错的码（空串/非 6 位数字）视同未配置：verify 把缺失的 code 字段读成
+  // 空串，空演示码等于免凭据登录——宁可演示账号登不进，也不能开这个口
+  return /^\d{6}$/.test(code) ? code : null;
 }
