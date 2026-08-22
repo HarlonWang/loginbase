@@ -119,6 +119,21 @@ export interface LoginConfig {
     /** 默认 true；置 false 则一条统计都不写 */
     enabled?: boolean;
   };
+  /**
+   * 应用商店审核用的演示账号（Play 与 App Store 共用一个）：命中该邮箱时
+   * `/code/send` 不真实发信、验证码恒为该固定值；其余一切（限流、存码、
+   * verify、建会话）与常规账号完全一致。动因：无密码登录交不出商店要的
+   * 静态凭据，TrendingAI 1.4.1 因此被 Play 拒过。**未配置即完全不存在这条路径。**
+   *
+   * 该码等同这个账号的永久密码：**必须走 secret、不得入库**，且**不能用真实
+   * 用户的邮箱**（否则谁拿到码就能登进那个真人的账号）。
+   */
+  demoAccount?: {
+    /** 比对时 trim + 转小写 */
+    email: string;
+    /** 与真码同形（6 位数字），客户端才无需特判 */
+    code: string;
+  };
   onVerified: OnVerified;
   /** 提供后才启用 link 端点（未提供 → 404 not_configured，默认关闭、显式启用） */
   onLinked?: OnLinked;
