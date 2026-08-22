@@ -1,7 +1,7 @@
 // 母本为 Tono-Server src/auth/handler.ts（第 1 步平移）；第 2 步钩子化：
 // 用户语义（users upsert / 试用 / /me）经 onVerified 移回 App 侧，
 // 事件出口接 onEvent，refreshTtlMs / accessTtlSeconds 可配生效。
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   generateCode,
   storeCode,
@@ -61,6 +61,14 @@ export function createAuthApp<TEnv>(
       return c.json({ error: "invalid_email" }, 400);
     }
 
+    // 演示账号：不发信、不存码、不计限流，直接假装发送成功（见 LoginConfig.demoAccount）。
+    // 必须放在限流**之前**——审核员反复试不能被「同 IP 1 小时 10 次」挡住，
+    // 而那正是商店要求「随时可用、可重复使用」时要绕开的东西
+    if (isDemoEmail(cfg(c), raw)) {
+      track(c, { event: "code_sent", meta: { demo: true } });
+      return c.json({ cooldownSeconds: 0 }, 200);
+    }
+
     const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
     const rl = await checkSendRateLimit(cfg(c).kv, raw, ip);
     if (!rl.allowed) {
@@ -102,12 +110,86 @@ export function createAuthApp<TEnv>(
     return c.json({ cooldownSeconds: 60 }, 200);
   });
 
+  /** 演示账号邮箱判定；未配置恒 false，即这条路径完全不存在 */
+  const isDemoEmail = (config: LoginConfig, email: string): boolean => {
+    const demo = config.demoAccount;
+    return !!demo && demo.email.trim().toLowerCase() === email;
+  };
+
+  /**
+   * 邮箱轨「码已确认」之后的公共收尾：建号钩子 → 建会话 → 签 token。
+   * 常规路径与演示账号共用，两条路只在「怎么确认这个码」上不同，
+   * 确认之后的会话语义必须一模一样——分叉出第二套建会话逻辑迟早会漂移。
+   */
+  const completeVerifiedLogin = async (
+    c: Context<{ Variables: AuthVariables }>,
+    email: string,
+    extra?: { demo?: true }
+  ) => {
+    const userAgent = c.req.header("User-Agent") ?? undefined;
+    const ip = c.req.header("CF-Connecting-IP") ?? undefined;
+
+    // 用户语义（建号/试用/档案）全部在 App 侧钩子内完成；
+    // 钩子失败 → 500（码已焚，重新发码），会话在钩子成功后才创建。
+    let verified: VerifiedResult;
+    try {
+      verified = await cfg(c).onVerified({
+        email,
+        provider: "email",
+        requestMeta: { ip, userAgent },
+      });
+    } catch {
+      track(c, { event: "code_verify", outcome: "internal", ...(extra ? { meta: extra } : {}) });
+      return c.json({ error: "internal" }, 500);
+    }
+
+    const { sessionId, refreshToken } = await createSession(cfg(c).db, {
+      userId: verified.userId,
+      userAgent,
+      ip,
+      expiresAt: sessionExpiry(c),
+    });
+
+    const accessToken = await signAccessToken(
+      cfg(c).jwt.secret,
+      verified.userId,
+      sessionId,
+      accessTtl(c)
+    );
+
+    track(c, { event: "code_verify", outcome: "ok", ...(extra ? { meta: extra } : {}) });
+    // 「登录成功」的唯一口径落点：客户端拿到 token 对。GitHub 轨的同名事件在
+    // /oauth/exchange 发（那里才是客户端真正拿到 token 的时刻）。
+    track(c, {
+      event: "login",
+      provider: "email",
+      userId: verified.userId,
+      ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
+      ...(extra ? { meta: extra } : {}),
+    });
+
+    return c.json({
+      accessToken,
+      refreshToken,
+      ...(verified.user !== undefined ? { user: verified.user } : {}),
+      ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
+    });
+  };
+
   auth.post("/code/verify", async (c) => {
     const body = await c.req
       .json<{ email?: string; code?: string }>()
       .catch(() => ({} as { email?: string; code?: string }));
     const email = trimmedField(body.email).toLowerCase();
     const code = trimmedField(body.code);
+
+    // 演示账号：绕开 KV——不焚码、不计错误尝试，故可重复使用、永不过期。
+    // 码不对则**继续走常规路径**，那条路上 readCode 必然为空（send 从没存过），
+    // 返回 code_expired，不额外泄露「这个邮箱是演示账号」
+    const demo = cfg(c).demoAccount;
+    if (demo && isDemoEmail(cfg(c), email) && code === demo.code) {
+      return await completeVerifiedLogin(c, email, { demo: true });
+    }
 
     const stored = await readCode(cfg(c).kv, email);
     if (!stored) {
@@ -129,53 +211,7 @@ export function createAuthApp<TEnv>(
 
     await deleteCode(cfg(c).kv, email);
 
-    const userAgent = c.req.header("User-Agent") ?? undefined;
-    const ip = c.req.header("CF-Connecting-IP") ?? undefined;
-
-    // 用户语义（建号/试用/档案）全部在 App 侧钩子内完成；
-    // 钩子失败 → 500（码已焚，重新发码），会话在钩子成功后才创建。
-    let verified: VerifiedResult;
-    try {
-      verified = await cfg(c).onVerified({
-        email,
-        provider: "email",
-        requestMeta: { ip, userAgent },
-      });
-    } catch {
-      track(c, { event: "code_verify", outcome: "internal" });
-      return c.json({ error: "internal" }, 500);
-    }
-
-    const { sessionId, refreshToken } = await createSession(cfg(c).db, {
-      userId: verified.userId,
-      userAgent,
-      ip,
-      expiresAt: sessionExpiry(c),
-    });
-
-    const accessToken = await signAccessToken(
-      cfg(c).jwt.secret,
-      verified.userId,
-      sessionId,
-      accessTtl(c)
-    );
-
-    track(c, { event: "code_verify", outcome: "ok" });
-    // 「登录成功」的唯一口径落点：客户端拿到 token 对。GitHub 轨的同名事件在
-    // /oauth/exchange 发（那里才是客户端真正拿到 token 的时刻）。
-    track(c, {
-      event: "login",
-      provider: "email",
-      userId: verified.userId,
-      ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
-    });
-
-    return c.json({
-      accessToken,
-      refreshToken,
-      ...(verified.user !== undefined ? { user: verified.user } : {}),
-      ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
-    });
+    return await completeVerifiedLogin(c, email);
   });
 
   auth.post("/refresh", async (c) => {
