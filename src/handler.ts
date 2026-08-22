@@ -29,8 +29,9 @@ import {
 import { signAccessToken, ACCESS_TTL_SECONDS } from "./token.js";
 import { createAuthMiddleware, type AuthVariables } from "./middleware.js";
 import { logEvent } from "./log.js";
-import { createTracker } from "./stats.js";
+import { createTracker, type StatEvent } from "./stats.js";
 import { trimmedField } from "./body.js";
+import { matchDemoAccount } from "./demo_account.js";
 import { registerGithubOauth } from "./plugins/github.js";
 import type { LoginConfig, VerifiedResult } from "./config.js";
 
@@ -61,34 +62,45 @@ export function createAuthApp<TEnv>(
       return c.json({ error: "invalid_email" }, 400);
     }
 
+    // 演示账号（见 demo_account.ts）：码为固定值且不真实发信，其余与常规一致。
+    // 解析放在限流之前，撞限流的演示流量才带得上 demo 标
+    const demo = matchDemoAccount(cfg(c), raw);
+
     const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
     const rl = await checkSendRateLimit(cfg(c).kv, raw, ip);
     if (!rl.allowed) {
       // 命中限流不只是滥用信号，更是「用户发不出码」的体验问题——分层记录才知道
       // 是自己手快（cooldown）还是真被挡住（email / ip 窗口）
-      track(c, { event: "rate_limited", outcome: rl.layer, meta: { endpoint: "code_send" } });
+      track(c, {
+        event: "rate_limited",
+        outcome: rl.layer,
+        meta: { endpoint: "code_send", ...(demo ? { demo: true } : {}) },
+      });
       return c.json(
         { error: "too_many_requests", retryAfterSeconds: rl.retryAfterSeconds },
         429
       );
     }
 
-    const code = generateCode();
+    const code = demo?.code ?? generateCode();
     const emitEvent = emit(c);
     warnEmailConfigOnce(cfg(c).email, emitEvent);
     const locale = resolveEmailLocale(cfg(c).email, body.locale);
-    try {
-      await sendCodeEmail(cfg(c).email, raw, code, locale.locale);
-    } catch (err) {
-      // 发信失败此前不留任何痕迹；邮件是邮箱登录的命脉，断了整条链就没了。
-      // Resend 的 HTTP 码在错误串里，聚合时再解析（不为此改造 email.ts 的抛错形态）。
-      track(c, { event: "code_send_failed", meta: { message: String(err) } });
-      return c.json({ error: "internal" }, 500);
+    if (demo === null) {
+      try {
+        await sendCodeEmail(cfg(c).email, raw, code, locale.locale);
+      } catch (err) {
+        // 发信失败此前不留任何痕迹；邮件是邮箱登录的命脉，断了整条链就没了。
+        // Resend 的 HTTP 码在错误串里，聚合时再解析（不为此改造 email.ts 的抛错形态）。
+        track(c, { event: "code_send_failed", meta: { message: String(err) } });
+        return c.json({ error: "internal" }, 500);
+      }
     }
     // 静默回落意味着「为什么收到英文邮件」在别处查不出来，故选中语言必须留痕
     track(c, {
       event: "code_sent",
       meta: {
+        ...(demo ? { demo: true } : {}),
         locale: {
           resolved: locale.locale,
           ...(locale.requested ? { requested: locale.requested } : {}),
@@ -109,10 +121,16 @@ export function createAuthApp<TEnv>(
     const email = trimmedField(body.email).toLowerCase();
     const code = trimmedField(body.code);
 
+    // 演示账号在 verify 无任何行为分叉；仅给事件补 meta.demo，
+    // 否则审核员的登录会混进真实登录漏斗（code_verify 不带 userId，事后剔不掉）
+    const isDemo = matchDemoAccount(cfg(c), email) !== null;
+    const t = (e: StatEvent) =>
+      track(c, isDemo ? { ...e, meta: { ...e.meta, demo: true } } : e);
+
     const stored = await readCode(cfg(c).kv, email);
     if (!stored) {
       // 过期、已焚、从未发过、已用过——在 KV 层都表现为读不到，无法再分（C3 口径）
-      track(c, { event: "code_verify", outcome: "code_not_found" });
+      t({ event: "code_verify", outcome: "code_not_found" });
       return c.json({ error: "code_expired" }, 400);
     }
 
@@ -120,10 +138,10 @@ export function createAuthApp<TEnv>(
       const attempts = await incrementAttempts(cfg(c).kv, email, stored);
       if (attempts >= MAX_ATTEMPTS) {
         await deleteCode(cfg(c).kv, email);
-        track(c, { event: "code_verify", outcome: "too_many_attempts" });
+        t({ event: "code_verify", outcome: "too_many_attempts" });
         return c.json({ error: "too_many_attempts" }, 429);
       }
-      track(c, { event: "code_verify", outcome: "invalid_code" });
+      t({ event: "code_verify", outcome: "invalid_code" });
       return c.json({ error: "invalid_code" }, 400);
     }
 
@@ -142,7 +160,7 @@ export function createAuthApp<TEnv>(
         requestMeta: { ip, userAgent },
       });
     } catch {
-      track(c, { event: "code_verify", outcome: "internal" });
+      t({ event: "code_verify", outcome: "internal" });
       return c.json({ error: "internal" }, 500);
     }
 
@@ -160,10 +178,10 @@ export function createAuthApp<TEnv>(
       accessTtl(c)
     );
 
-    track(c, { event: "code_verify", outcome: "ok" });
+    t({ event: "code_verify", outcome: "ok" });
     // 「登录成功」的唯一口径落点：客户端拿到 token 对。GitHub 轨的同名事件在
     // /oauth/exchange 发（那里才是客户端真正拿到 token 的时刻）。
-    track(c, {
+    t({
       event: "login",
       provider: "email",
       userId: verified.userId,
