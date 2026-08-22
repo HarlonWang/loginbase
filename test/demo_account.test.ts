@@ -3,6 +3,8 @@
 // 账号走同一条路。这里既验证审核员流程可用，也验证「不存在鉴权旁路」。
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { createLogin, flushStats, MAX_ATTEMPTS } from "../src/index";
+import { matchDemoAccount } from "../src/demo_account";
+import type { LoginConfig } from "../src/config";
 import { env, app, initDb, wipeKv, tonoLikeOnVerified } from "./helpers";
 
 const DEMO_EMAIL = "demo.reviewer@example.com";
@@ -51,6 +53,44 @@ async function readEvents() {
   }));
 }
 
+// 纯函数单测：码合法性也是「是否命中演示账号」判定的一部分（契约见 config.ts），
+// 非法类别在此枚举；HTTP 层只保留空串一例（免凭据登录向量）作端到端确证
+describe("matchDemoAccount 的码校验", () => {
+  const withCode = (code: string) =>
+    ({ demoAccount: { email: DEMO_EMAIL, code } }) as LoginConfig;
+
+  it("合法 6 位数字 → 命中", () => {
+    expect(matchDemoAccount(withCode("246810"), DEMO_EMAIL)).toEqual({
+      code: "246810",
+    });
+  });
+
+  it("带首尾空白 → trim 后命中", () => {
+    expect(matchDemoAccount(withCode("  246810\n"), DEMO_EMAIL)).toEqual({
+      code: "246810",
+    });
+  });
+
+  it.each([
+    ["空串", ""],
+    ["纯空白", "   "],
+    ["不足 6 位", "24681"],
+    ["超过 6 位", "2468100"],
+    ["含非数字", "24681x"],
+    ["中间带空格", "246 810"],
+  ])("%s → 视同未配置", (_label, code) => {
+    expect(matchDemoAccount(withCode(code), DEMO_EMAIL)).toBeNull();
+  });
+
+  it("邮箱不匹配 → null，码合法也不命中", () => {
+    expect(matchDemoAccount(withCode("246810"), "other@example.com")).toBeNull();
+  });
+
+  it("未配置 demoAccount → 恒 null", () => {
+    expect(matchDemoAccount({} as LoginConfig, DEMO_EMAIL)).toBeNull();
+  });
+});
+
 describe("演示账号", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
@@ -78,19 +118,19 @@ describe("演示账号", () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
 
     // 发码后拿固定码去验也进不来——确证未配置时不存在固定码路径。
-    // 随机码有 1/1e6 概率恰好撞上固定码，撞上时跳过断言以免假红
+    // 直接断言存码不等于固定码，而非撞码时跳过：若「未配置却启用固定码」的
+    // 回归存在，存码必等于固定码，这里必红；诚实随机下假红概率 1/1e6，可接受
     const stored = JSON.parse(
       (await env.EMAIL_CODES.get(`code:${DEMO_EMAIL}`)) ?? "null"
     ) as { code: string } | null;
     expect(stored?.code).toMatch(/^\d{6}$/);
-    if (stored?.code !== DEMO_CODE) {
-      const rejected = await post(app, "/auth/code/verify", {
-        email: DEMO_EMAIL,
-        code: DEMO_CODE,
-      });
-      expect(rejected.status).toBe(400);
-      expect(await rejected.json()).toEqual({ error: "invalid_code" });
-    }
+    expect(stored?.code).not.toBe(DEMO_CODE);
+    const rejected = await post(app, "/auth/code/verify", {
+      email: DEMO_EMAIL,
+      code: DEMO_CODE,
+    });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toEqual({ error: "invalid_code" });
   });
 
   it("send：200 且响应与常规相同、不发信、KV 里存的就是固定码", async () => {
