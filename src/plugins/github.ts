@@ -281,10 +281,11 @@ export function registerGithubOauth<TEnv>(
     if (!gh) return c.json({ error: "not_configured" }, 404);
 
     const code = c.req.query("code") ?? "";
+    const providerError = c.req.query("error") ?? "";
     const state = c.req.query("state") ?? "";
     const stateKey = `oauth:state:${state}`;
     const rawState = state ? await cfg(c).kv.get(stateKey) : null;
-    if (!code || !rawState) {
+    if (!rawState) {
       // state 无效即回跳地址不可信，只能就地报错。
       // 此分支拿不到 flowId——它就存在读不出来的那条 state 记录里。
       track(c, {
@@ -305,6 +306,13 @@ export function registerGithubOauth<TEnv>(
         ...(userId ? { userId } : {}),
         meta: { mode: mode ?? "login", ...meta },
       });
+
+    // GitHub 用 ?error= 回报用户拒绝授权，此时没有 code；state 已验过，回跳地址可信
+    if (!code) {
+      const reason = REASON_PATTERN.test(providerError) ? providerError : "no_code";
+      trackCallback(reason);
+      return c.redirect(withParam(redirect, "error", reason), 302);
+    }
 
     const identity = await fetchGithubIdentity(gh, code);
     if (!identity) {

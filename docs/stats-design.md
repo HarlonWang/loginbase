@@ -234,7 +234,7 @@
 | `code_verify` | `ok` / `invalid_code` / `code_not_found` / `too_many_attempts` | — | C2 分子、**C3** | 新增 |
 | `login` | — | provider、user_id、is_new_user、country | **A2 A3 B1 K3** | 新增 |
 | `oauth_start` | `ok` / `invalid_redirect` | flow_id、mode | D4 分母 | 新增 |
-| `oauth_callback` | `issued` / `linked` / `invalid_state` / `oauth_failed` / `no_email` / `link_conflict` / `internal` | flow_id、mode | D4 分子、**D11** 被减数 | 新增 |
+| `oauth_callback` | `issued` / `linked` / `invalid_state` / `access_denied`（及 GitHub 回传的其他 `?error=`）/ `no_code` / `oauth_failed` / `no_email` / `link_conflict` / `internal` | flow_id、mode | D4 分子、**D11** 被减数 | 新增 |
 | `oauth_exchange` | `ok` / `invalid_otc` | flow_id、user_id | **D11** 减数 | 新增 |
 | `refresh` | `ok` / `rescued` / `reuse_revoked` / `guardrail_revoked` / `invalid` | user_id、family_id | **F2** | 已有三个异常 outcome，**缺 `ok`**（F2 至今没有分母） |
 | `rate_limited` | `cooldown` / `email` / `ip` | endpoint | H1 | 新增（2026-08-17 追加，见 6.10） |
@@ -245,6 +245,8 @@
 - **`login` 是「登录成功」的唯一口径落点**，两条轨都发它：邮箱轨在验码成功建会话后，**GitHub 轨在 `oauth_exchange` 成功时**（口径 = 客户端真正拿到 token 对）。**推论**：callback 建了会话但客户端从未兑换时，会话存在而没有 `login` 事件——这是**符合口径的**，正是 D11 要量的那部分。
 - `code_send_failed` 新开一个事件而不是给 `code_sent` 加 outcome：`code_sent` 现有语义是「已发出」，且已被 `hooks.test.ts` 锁定，改语义会波及消费方。
 - `invalid_state` 时**拿不到 flow_id**（state 读不出来，里面的 flow_id 自然也读不出），该条事件的 flow_id 为空——D4 的分子按计数算不受影响。
+- **`invalid_state` 大部分不是失败**：state 单次使用，浏览器对自定义 scheme 跳转的二次加载会让同一个 callback 再打一次，落成 `invalid_state`。2026-08-25 在 TrendingAI 生产实测 7 次里 6 次紧跟在 1~49 秒前的一次 `issued` 之后。**算完成率时应把紧随成功之后的 `invalid_state` 剔除**，否则低估 D4。
+- **用户拒绝授权走 `access_denied`，不再混进 `invalid_state`**：GitHub 的 `?error=` 回调没有 `code`，此前与 state 读不出合并在同一分支。二者的改法完全不同（前者是授权文案与信任，后者是链路），必须分开计。
 
 ### 2. 漏斗串联标识 flow_id
 
