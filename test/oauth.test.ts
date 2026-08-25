@@ -221,6 +221,53 @@ describe("GET /auth/oauth/github/callback + POST /auth/oauth/exchange", () => {
     expect(await res.json()).toEqual({ error: "invalid_state" });
   });
 
+  it("用户拒绝授权（?error=access_denied，无 code）→ 302 回跳带 error=access_denied", async () => {
+    const state = await startAndGetState();
+    const res = await app.request(
+      `/auth/oauth/github/callback?error=access_denied&state=${state}`,
+      { method: "GET" },
+      env
+    );
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("Location")!).searchParams.get("error")).toBe(
+      "access_denied"
+    );
+  });
+
+  it("无 code 且 error 串畸形 → 回跳 error=no_code，不透传原串", async () => {
+    const state = await startAndGetState();
+    const res = await app.request(
+      `/auth/oauth/github/callback?error=${encodeURIComponent("<script>x</script>")}&state=${state}`,
+      { method: "GET" },
+      env
+    );
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("Location")!).searchParams.get("error")).toBe(
+      "no_code"
+    );
+  });
+
+  it("redirect 自带 query 与 fragment：error 落在查询串、不被旧值遮蔽、fragment 保留", async () => {
+    const target = "testapp://auth/callback?error=stale#frag";
+    const start = await app.request(
+      `/auth/oauth/github/start?redirect=${encodeURIComponent(target)}`,
+      { method: "GET" },
+      env
+    );
+    const state = new URL(start.headers.get("Location")!).searchParams.get(
+      "state"
+    )!;
+    const res = await app.request(
+      `/auth/oauth/github/callback?error=access_denied&state=${state}`,
+      { method: "GET" },
+      env
+    );
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.searchParams.get("error")).toBe("access_denied");
+    expect(loc.hash).toBe("#frag");
+  });
+
   it("GitHub 换码失败 → 302 redirect?error=oauth_failed", async () => {
     const state = await startAndGetState();
     mockGithub(fetchSpy, { token: null });

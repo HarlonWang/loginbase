@@ -2,7 +2,7 @@
 
 > **本文件是 API 契约的唯一权威**，只住服务端仓——客户端仓 `HarlonWang/loginbase-kt` 只链接、不留副本。协议变更必须与服务端实现同 commit，并在客户端仓开跟进 issue、客户端版本落地前不关（2026-08-13 分仓后的纪律，见 CLAUDE.md 铁律与 design.md）。
 >
-> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.5.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
+> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.6.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
 >
 > 结构与决策背景见 [server-design.md](server-design.md)；本文只记 wire 层事实。
 
@@ -136,6 +136,7 @@ GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注�
 | 失败 | 行为 |
 |---|---|
 | state 缺失/无效/已使用 | `400 { "error": "invalid_state" }`（redirect 未知，无法回跳） |
+| GitHub 回 `?error=`（用户拒绝授权等，无 `code`） | `302 {redirect}?error={error}`（典型 `access_denied`）；`error` 不匹配 `[A-Za-z0-9_]{1,64}` 或缺省时回落 `no_code`。**state 有效才走这里**，否则同上一行 |
 | GitHub 换码或取用户失败 | `302 {redirect}?error=oauth_failed` |
 | 无 verified 邮箱 | login：`302 {redirect}?error=oauth_no_email`；**link 分支不失败**——userId 已定，email 只是附加信息 |
 | onVerified / onLinked 抛错 | `302 {redirect}?error=internal` |
@@ -180,6 +181,8 @@ GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注�
 | `oauth:otc:{otc}` | 60s | 一次性授权码载荷（单次） |
 
 ## 版本历史
+
+- **1.6.0**（2026-08）：GitHub callback 收到 `?error=`（无 `code`）时改为 **302 回跳** `{redirect}?error={error}`（典型 `access_denied`，字符集不合法或缺省时回落 `no_code`），并以该值作为 `oauth_callback` 的 outcome。此前它与「state 读不出」合并在一个分支，一律 `400 invalid_state`——把「用户在授权页点了拒绝」记成了 state 无效，且用户被留在浏览器的错误页上收不到回跳。**wire 向后兼容**：新增的是一种已存在形态的回跳（`?error=` 早就是 callback 的失败约定），不认识 `access_denied` 的老客户端按既有未知 error 分支处理。**state 无效时的 400 不变**——那种情况回跳地址不可信。
 
 - **1.5.0**（2026-08）：新增**可选**服务端配置 `demoAccount`，给应用商店审核用的固定邮箱 + 固定验证码（见上方「演示账号」）。**wire 零变更、客户端零改动**；实现上唯一分叉在 `/code/send`（码为定值、不发信），verify 与建会话全走常规路径，无鉴权旁路。**未配置时该路径完全不存在。**动因：无密码登录交不出商店要的「随时可用、可重复使用」凭据，Play 的「登录详细信息」表单尤其不接受「部分功能受限但不提供凭据」，TrendingAI 1.4.1 于 2026-08-22 因此被拒；Play 与 App Store Connect 的要求一致，故一个演示账号跨商店共用。
 
