@@ -83,8 +83,12 @@ function redirectAllowed(redirect: string, github: GithubSocialConfig): boolean 
   });
 }
 
+// 回跳地址允许自带 query 与 fragment（redirectAllowed 只比对 protocol/host/pathname），
+// 文本拼接会把参数追加进 fragment、或让已有的同名键遮蔽新值，客户端 searchParams 取不到
 function withParam(url: string, key: string, value: string): string {
-  return `${url}${url.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(value)}`;
+  const target = new URL(url);
+  target.searchParams.set(key, value);
+  return target.toString();
 }
 
 // providerProfile 只透传建档需要的公开档案白名单——GET /user 的认证视图含

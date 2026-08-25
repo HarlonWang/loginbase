@@ -247,6 +247,27 @@ describe("GET /auth/oauth/github/callback + POST /auth/oauth/exchange", () => {
     );
   });
 
+  it("redirect 自带 query 与 fragment：error 落在查询串、不被旧值遮蔽、fragment 保留", async () => {
+    const target = "testapp://auth/callback?error=stale#frag";
+    const start = await app.request(
+      `/auth/oauth/github/start?redirect=${encodeURIComponent(target)}`,
+      { method: "GET" },
+      env
+    );
+    const state = new URL(start.headers.get("Location")!).searchParams.get(
+      "state"
+    )!;
+    const res = await app.request(
+      `/auth/oauth/github/callback?error=access_denied&state=${state}`,
+      { method: "GET" },
+      env
+    );
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.searchParams.get("error")).toBe("access_denied");
+    expect(loc.hash).toBe("#frag");
+  });
+
   it("GitHub 换码失败 → 302 redirect?error=oauth_failed", async () => {
     const state = await startAndGetState();
     mockGithub(fetchSpy, { token: null });
