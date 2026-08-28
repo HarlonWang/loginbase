@@ -1,64 +1,131 @@
 # loginbase
 
-> The shared login foundation for my apps — email OTP + social OAuth + session management.
-> Cloudflare Workers server library + Kotlin Multiplatform client.
+> Email OTP, social sign-in and session management for Cloudflare Workers.
 
-多 App 共用的登录底座：邮箱验证码登录、社交 OAuth（GitHub 等）、会话管理（refresh 轮换 + 重用检测 + 丢回执救活）。服务端库跑在各 App 自己的 Cloudflare Worker 里（数据在各自 D1，不做中心化账号），客户端库以 Kotlin Multiplatform 提供，住在姊妹仓 [HarlonWang/loginbase-kt](https://github.com/HarlonWang/loginbase-kt)（第 4 步新建）。**协议契约 [docs/protocol.md](docs/protocol.md) 只住本仓，是两端的唯一权威。**
+**English** | [简体中文](README.zh-CN.md)
 
-## 由来
+[![npm](https://img.shields.io/npm/v/loginbase)](https://www.npmjs.com/package/loginbase)
+[![license](https://img.shields.io/npm/l/loginbase)](LICENSE)
 
-- 起点是 TrendingAI 替换 Logto 的调研（邮箱登录被迫走托管 web 页、CN 链路差），结论选定自建，见 [docs/logto-替换方案-调研.md](docs/logto-替换方案-调研.md)
-- 服务端实现的母本是 Tono-Server 已在生产验证的邮箱验证码登录（含全套测试），本仓库是它的抽取 + 泛化
-- 路线选择（公共库而非中心化服务）与仓库设计见 [docs/design.md](docs/design.md)，命名记录见 [docs/naming.md](docs/naming.md)
+loginbase mounts into a Worker you already run. Users, sessions and login events live in **your** D1 database — there is no central account server, no vendor dashboard, and nothing extra to deploy. An official Kotlin Multiplatform client, [loginbase-kt](https://github.com/HarlonWang/loginbase-kt), implements the other half.
 
-## 结构（两个仓库：一份协议，两个产物）
+## Why
 
-```
-loginbase/                   # 本仓：TS 服务端库 + 协议契约
-├── src/                     # TS 服务端库（Hono sub-app 工厂），从 Tono-Server 平移
-├── test/                    # vitest
-├── queries/                 # 登录统计取数 SQL（人肉执行；口径见 docs/stats-design.md）
-├── docs/
-│   ├── design.md            # 路线与仓库设计决策
-│   ├── server-design.md     # 服务端技术方案（公共 API/协议草案/会话模型/平移策略）
-│   ├── plan.md              # 实施计划（五步任务清单/验收点/版本线）
-│   ├── naming.md            # 命名讨论记录
-│   ├── protocol.md          # API 契约（唯一权威）——代码平移时落笔
-│   ├── email-identity.md    # 邮箱与身份锚点：**接入方必读**（GitHub 邮箱模型 / 为何不该拿邮箱找号 / 业界做法）
-│   └── logto-替换方案-调研.md # 背景调研（自 TrendingProjects 迁入）
-└── README.md
+**Hosted auth costs you the experience and the data.** Email sign-in gets redirected to someone else's web page, latency depends on someone else's edge, and your users' identities sit in someone else's database — which turns into a migration project the day pricing or policy changes.
 
-loginbase-kt/                # 姊妹仓：KMP 客户端库（独立 gradle 工程、独立 CI 与版本线）
-```
+**Rolling your own is harder than it looks.** Refresh rotation, replay detection, the race between a dropped refresh response and the client's retry, a dozen in-flight requests all refreshing at once. Get any of these wrong and it fails *silently*: nothing breaks in testing, and you find out when users are logged out for no reason — or you never find out at all.
 
-## 产物坐标
+loginbase is the middle path. The session model of a real auth product, shipped as a dependency you own, running inside the Worker you already have.
 
-```
-服务端仓     HarlonWang/loginbase          （含 protocol.md，协议唯一权威）
-客户端仓     HarlonWang/loginbase-kt
-npm         loginbase                     （npm registry，本仓 tag 触发 CI 发布）
-Maven       wang.harlon:loginbase-kt      （Maven Central，客户端仓 tag 触发 CI 发布）
-Kotlin 包    wang.harlon.loginbase
+## What you get
+
+- **Passwordless sign-in, more than one way.** Six-digit email codes with enumeration-safe responses and three layers of rate limiting, GitHub OAuth, and account linking — so a signed-in user claims a second identity instead of ending up with a duplicate account. Code emails ship in English and Chinese.
+- **Token theft is detected; bad networks aren't punished.** Refresh tokens rotate on every use, and a replayed token kills the session on the spot. A refresh response lost to a flaky connection is *not* theft, and gets recovered rather than punished.
+- **Passes app-store review.** Passwordless login can't produce the static credentials Google Play and App Store Connect ask for. An optional demo account can, without opening an authentication bypass.
+- **Login analytics built in.** Every send, verify, refresh and revoke lands in your own `auth_events` table, with geography from `request.cf` — no external dependency, no data leaving your account.
+- **A client that hides tokens entirely.** With [loginbase-kt](https://github.com/HarlonWang/loginbase-kt), your app code never contains a token, a refresh call, or a 401 handler.
+
+## Quick start
+
+**1. Install.** `hono` is a peer dependency — you pick the version.
+
+```bash
+npm install loginbase hono
 ```
 
-两仓各自独立版本线，tag 为裸版本号；协议兼容关系由 `protocol.md` 版本历史 + 客户端仓 README 的对齐声明表达，不靠版本号相等表达。
+**2. Apply the migrations.** The package ships its own DDL (`sessions`, `auth_events`).
 
-## 状态与路线
+```toml
+# wrangler.toml — for a D1 database dedicated to auth
+[[d1_databases]]
+binding = "DB"
+database_name = "my-app"
+database_id = "..."
+migrations_dir = "node_modules/loginbase/migrations"
+```
 
-**落地第 1~3 步已完成**（2026-08-13）：`loginbase@1.1.0` 上线 npm；Tono-Server（钩子化）与 github-ai-trending-api（双轨迁移：loginbase 优先 + Logto fallback）均已部署生产并通过分层验收。下一步 = 第 4 步 KMP 客户端。落地顺序：
+```bash
+npx wrangler d1 migrations apply my-app --remote
+```
 
-1. 从 Tono-Server 平移服务端代码与测试，Tono-Server 改为依赖本包（其现有测试即抽取验收）
-2. 钩子化（`onVerified` 用户回调）+ zh/en 邮件模板 + github-oauth 可选插件
-3. TrendingAI 后端接入（`/auth` 挂载 + requireAuth 双轨 + Logto 存量迁移）
-4. KMP 客户端库 + TrendingAI 登录 UI（commonMain）
-5. Tono-Android 择机换用 loginbase-kt 的 android target
+Sharing a D1 that already has migrations of its own? Copy the two files from `node_modules/loginbase/migrations/` into your own migrations directory instead. **Skipping `0002_auth_events.sql` is silent** — login keeps working, analytics just never land.
 
-## 设计红线
+**3. Create and mount.** The only thing loginbase asks of you is how to turn a verified identity into a user id. Everything about your user table stays yours.
 
-- 依赖准入（2026-08-18 由「依赖最小集」改判）：auth 库是供应链攻击的最高价值目标，所以**审查来源，而不是一味压数量**。放行三类，其余一律先停下来问值不值：
-  1. 现有基座——服务端 hono + jose（+ zod-validator），客户端 ktor-client-core + kotlinx-serialization-json + kotlinx-coroutines-core；
-  2. 业界权威库——四条判据全满足：① 生态事实标准，组织或多人维护、发布节奏稳定；② 发布带 provenance / trusted publishing（npm）或签名（Maven Central）；③ 传递依赖 ≤ 2 且同样满足 ①；④ 无安装脚本；
-  3. 自己的库（`HarlonWang/*`）——同样走 trusted publishing 发布，在库里优先声明为 peerDependency，由消费方定版本
+```ts
+import { Hono } from "hono";
+import { createLogin } from "loginbase";
 
-  仍然拒绝：为省几十行代码的工具包、单人维护的新包或小众包、运行时联网或带安装脚本的包、为一个功能拖进整个框架的包。版本钉死 + lockfile + provenance 不变
-- 协议变更：服务端实现 + `docs/protocol.md` 同一个 commit，并在 `loginbase-kt` 仓开跟进 issue，客户端版本落地前不关（2026-08-13 由 monorepo 三位一体改判，理由见 design.md）
+const login = createLogin<Env>((env) => ({
+  db: env.DB,
+  kv: env.EMAIL_CODES,
+  jwt: { secret: env.JWT_SECRET },
+  email: {
+    resendApiKey: env.RESEND_API_KEY,
+    from: "Acme <login@acme.com>",
+    brand: "Acme",
+  },
+  async onVerified({ email }) {
+    const user = await findOrCreateUser(env.DB, email);
+    return { userId: user.id, isNewUser: user.isNew };
+  },
+}));
+
+const app = new Hono<{ Bindings: Env }>();
+app.route("/", login.app);                        // serves /auth/*
+app.get("/api/me", login.middleware, (c) =>       // Bearer verification
+  c.json({ userId: c.get("userId") })
+);
+
+export default app;
+```
+
+Not using Hono for your own routes? `login.fetch(request, env, ctx)` behind one `pathname.startsWith("/auth")` works the same.
+
+**4. Add GitHub sign-in** (optional) by giving loginbase your OAuth app and the deep links it's allowed to return to:
+
+```ts
+socials: {
+  github: {
+    clientId: env.GITHUB_CLIENT_ID,
+    clientSecret: env.GITHUB_CLIENT_SECRET,
+    allowedRedirects: ["acme://auth"],
+  },
+},
+```
+
+**5. Connect your app.** Point [loginbase-kt](https://github.com/HarlonWang/loginbase-kt) at `https://your-worker.example.com/auth` and you're done — it owns storage, refresh and the OAuth browser round trip from there.
+
+## How the two halves line up
+
+One redirect value has to match in three places, or social sign-in fails in ways that are tedious to diagnose:
+
+| Where | What |
+|---|---|
+| Server | `socials.github.allowedRedirects` |
+| Android app | `manifestPlaceholders["loginbaseRedirectScheme"]` |
+| Client runtime | derived from that same placeholder |
+
+The client can print exactly what to whitelist — call `Loginbase.redirectUri(context)` and paste the result into `allowedRedirects`.
+
+## Requirements
+
+Cloudflare Workers with D1 and KV bindings · `hono` ^4.12.8 · a [Resend](https://resend.com) account for delivery.
+
+## Not included
+
+loginbase deliberately stops at authentication and sessions. It has no password login, no OIDC or SAML, no multi-tenancy, no admin UI, and no user profile storage — your `onVerified` owns the user table. Sign-in providers are email and GitHub; email delivery is Resend; the runtime is Cloudflare Workers. If you need an identity provider rather than a login foundation, use one.
+
+## Documentation
+
+| | |
+|---|---|
+| [Protocol contract](docs/protocol.md) | The wire API — single source of truth for both halves |
+| [Server design](docs/server-design.md) | Configuration surface, session model, hooks |
+| [Email and identity](docs/email-identity.md) | **Read before integrating** — why an email address is a poor identity anchor |
+| [Login analytics](docs/stats-design.md) | Event schema and metric definitions |
+| [Design decisions](docs/design.md) | Why a library instead of a service, and other roads not taken |
+
+## License
+
+MIT
