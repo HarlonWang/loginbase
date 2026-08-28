@@ -27,10 +27,10 @@ loginbase 是中间那条路：一套成熟认证产品该有的会话模型，�
 
 ## 快速开始
 
-**1. 安装。** `hono` 是 peer dependency，版本由你定。
+**1. 安装。** Hono 作为 peer dependency 自动带上——你的 Worker 若已经在用它，那就是同一份，版本由你定。
 
 ```bash
-npm install loginbase hono
+npm install loginbase
 ```
 
 **2. 执行迁移。** DDL（`sessions`、`auth_events`）随包分发。

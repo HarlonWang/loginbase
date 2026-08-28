@@ -27,10 +27,10 @@ loginbase is the middle path. The session model of a real auth product, shipped 
 
 ## Quick start
 
-**1. Install.** `hono` is a peer dependency — you pick the version.
+**1. Install.** Hono comes along as a peer dependency — if your Worker already uses it, that stays the single copy and the version is yours to pick.
 
 ```bash
-npm install loginbase hono
+npm install loginbase
 ```
 
 **2. Apply the migrations.** The package ships its own DDL (`sessions`, `auth_events`).
