@@ -418,6 +418,67 @@ describe("OAuth 漏斗", () => {
     expect(all.find((r) => r.event === "oauth_exchange")!.meta).toBeNull();
   });
 
+  it("start 的客户端自述参数随 state 透传全链，且不进 exchange 响应体", async () => {
+    const { app } = makeLogin();
+    const start = await app.request(
+      "/auth/oauth/github/start?redirect=testapp%3A%2F%2Fauth" +
+        "&browser_tier=custom_tab&browser_pkg=com.android.chrome&client_flow_id=cf-123_A",
+      { method: "GET" },
+      env
+    );
+    const state = new URL(start.headers.get("Location")!).searchParams.get("state")!;
+    const cb = await app.request(
+      `/auth/oauth/github/callback?code=gh-code&state=${state}`,
+      { method: "GET" },
+      env
+    );
+    const otc = new URL(cb.headers.get("Location")!).searchParams.get("otc")!;
+    const ex = await app.request(
+      "/auth/oauth/exchange",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otc }),
+      },
+      env
+    );
+    const body = (await ex.json()) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["accessToken", "isNewUser", "refreshToken"]);
+    await flushStats();
+
+    const all = await rows();
+    for (const event of ["oauth_start", "oauth_callback", "oauth_exchange", "login"]) {
+      const meta = JSON.parse(String(all.find((r) => r.event === event)!.meta)) as Record<
+        string,
+        unknown
+      >;
+      expect(meta.browserTier, event).toBe("custom_tab");
+      expect(meta.browserPkg, event).toBe("com.android.chrome");
+      expect(meta.clientFlowId, event).toBe("cf-123_A");
+    }
+  });
+
+  it("非法的客户端自述参数静默丢弃，登录照常", async () => {
+    const { app } = makeLogin();
+    const start = await app.request(
+      "/auth/oauth/github/start?redirect=testapp%3A%2F%2Fauth" +
+        "&browser_tier=webview&browser_pkg=bad%20pkg%21&client_flow_id=" +
+        "x".repeat(65),
+      { method: "GET" },
+      env
+    );
+    expect(start.status).toBe(302);
+    await flushStats();
+    const all = await rows();
+    const meta = all.find((r) => r.event === "oauth_start")!.meta;
+    if (meta !== null) {
+      const parsed = JSON.parse(String(meta)) as Record<string, unknown>;
+      expect(parsed.browserTier).toBeUndefined();
+      expect(parsed.browserPkg).toBeUndefined();
+      expect(parsed.clientFlowId).toBeUndefined();
+    }
+  });
+
   it("超长 UA 截断到 256 字符", async () => {
     const { app } = makeLogin();
     await app.request(
