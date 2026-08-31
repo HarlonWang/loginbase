@@ -468,14 +468,38 @@ describe("OAuth 漏斗", () => {
       env
     );
     expect(start.status).toBe(302);
+    const state = new URL(start.headers.get("Location")!).searchParams.get("state")!;
+    const cb = await app.request(
+      `/auth/oauth/github/callback?code=gh-code&state=${state}`,
+      { method: "GET" },
+      env
+    );
+    const otc = new URL(cb.headers.get("Location")!).searchParams.get("otc")!;
+    const ex = await app.request(
+      "/auth/oauth/exchange",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otc }),
+      },
+      env
+    );
+    expect(ex.status).toBe(200);
     await flushStats();
+
     const all = await rows();
-    const meta = all.find((r) => r.event === "oauth_start")!.meta;
-    if (meta !== null) {
-      const parsed = JSON.parse(String(meta)) as Record<string, unknown>;
-      expect(parsed.browserTier).toBeUndefined();
-      expect(parsed.browserPkg).toBeUndefined();
-      expect(parsed.clientFlowId).toBeUndefined();
+    expect(all.map((r) => `${r.event}:${r.outcome ?? ""}`)).toEqual([
+      "oauth_start:ok",
+      "oauth_callback:issued",
+      "oauth_exchange:ok",
+      "login:",
+    ]);
+    for (const r of all) {
+      if (r.meta === null) continue;
+      const parsed = JSON.parse(String(r.meta)) as Record<string, unknown>;
+      expect(parsed.browserTier, r.event).toBeUndefined();
+      expect(parsed.browserPkg, r.event).toBeUndefined();
+      expect(parsed.clientFlowId, r.event).toBeUndefined();
     }
   });
 
