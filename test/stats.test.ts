@@ -380,6 +380,57 @@ describe("OAuth 漏斗", () => {
     expect(all[3].user_id).toBe("u-stats");
   });
 
+  it("start 与 callback 把浏览器 UA 记进 meta，exchange 不记", async () => {
+    const { app } = makeLogin();
+    const browserHeaders = {
+      "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) Chrome/137.0.0.0 Mobile Safari/537.36",
+      "sec-ch-ua": '"Chromium";v="137", "Brave";v="137", "Not/A)Brand";v="24"',
+    };
+    const start = await app.request(
+      "/auth/oauth/github/start?redirect=testapp%3A%2F%2Fauth",
+      { method: "GET", headers: browserHeaders },
+      env
+    );
+    const state = new URL(start.headers.get("Location")!).searchParams.get("state")!;
+    const cb = await app.request(
+      `/auth/oauth/github/callback?code=gh-code&state=${state}`,
+      { method: "GET", headers: browserHeaders },
+      env
+    );
+    const otc = new URL(cb.headers.get("Location")!).searchParams.get("otc")!;
+    await app.request(
+      "/auth/oauth/exchange",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otc }),
+      },
+      env
+    );
+    await flushStats();
+
+    const all = await rows();
+    const metaOf = (event: string) =>
+      JSON.parse(String(all.find((r) => r.event === event)!.meta)) as Record<string, unknown>;
+    expect(metaOf("oauth_start").ua).toContain("Chrome/137");
+    expect(metaOf("oauth_start").secChUa).toContain("Brave"); // UA 同 Chrome 的套壳靠品牌列表区分
+    expect(metaOf("oauth_callback").ua).toContain("Chrome/137"); // issued 行也是 oauth_callback
+    expect(all.find((r) => r.event === "oauth_exchange")!.meta).toBeNull();
+  });
+
+  it("超长 UA 截断到 256 字符", async () => {
+    const { app } = makeLogin();
+    await app.request(
+      "/auth/oauth/github/start?redirect=testapp%3A%2F%2Fauth",
+      { method: "GET", headers: { "User-Agent": "x".repeat(1000) } },
+      env
+    );
+    await flushStats();
+    const all = await rows();
+    const meta = JSON.parse(String(all[0].meta)) as Record<string, string>;
+    expect(meta.ua).toHaveLength(256);
+  });
+
   it("exchange 响应体不含内部字段（协议形态不变）", async () => {
     const { app } = makeLogin();
     const start = await app.request(

@@ -22,6 +22,19 @@ const DEFAULT_SCOPE = "user:email";
 // App 自定义的冲突 reason 会进回跳 URL，限制字符集防畸形/敏感内容外泄
 const REASON_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
 
+// start/callback 是浏览器发出的请求，UA 即浏览器身份——「issued 后回跳丢失」（D11）
+// 定位靠它；exchange 来自 App 网络栈、UA 无信息量，不记。sec-ch-ua 必须一并记：
+// Brave 等套壳浏览器的 UA 与 Chrome 一字不差，只有品牌列表分得出。截断防超长头污染统计表
+const UA_MAX = 256;
+function browserMeta(c: { req: { header(name: string): string | undefined } }): Record<string, string> {
+  const out: Record<string, string> = {};
+  const ua = c.req.header("User-Agent");
+  if (ua) out.ua = ua.slice(0, UA_MAX);
+  const brands = c.req.header("sec-ch-ua");
+  if (brands) out.secChUa = brands.slice(0, UA_MAX);
+  return out;
+}
+
 interface StateRecord {
   redirect: string;
   /**
@@ -212,12 +225,14 @@ export function registerGithubOauth<TEnv>(
     const gh = github(c);
     if (!gh) return c.json({ error: "not_configured" }, 404);
 
+    const ua = browserMeta(c);
     const redirect = c.req.query("redirect") ?? "";
     if (!redirect || !redirectAllowed(redirect, gh)) {
       track(c, {
         event: "oauth_start",
         outcome: "invalid_redirect",
         provider: "github",
+        ...(Object.keys(ua).length ? { meta: ua } : {}),
       });
       return c.json({ error: "invalid_redirect" }, 400);
     }
@@ -229,7 +244,13 @@ export function registerGithubOauth<TEnv>(
       expirationTtl: STATE_TTL_SECONDS,
     });
 
-    track(c, { event: "oauth_start", outcome: "ok", provider: "github", flowId });
+    track(c, {
+      event: "oauth_start",
+      outcome: "ok",
+      provider: "github",
+      flowId,
+      ...(Object.keys(ua).length ? { meta: ua } : {}),
+    });
     return c.redirect(buildAuthorizeUrl(gh, callbackUrlFor(c, gh), state), 302);
   });
 
@@ -284,6 +305,7 @@ export function registerGithubOauth<TEnv>(
     const gh = github(c);
     if (!gh) return c.json({ error: "not_configured" }, 404);
 
+    const ua = browserMeta(c);
     const code = c.req.query("code") ?? "";
     const providerError = c.req.query("error") ?? "";
     const state = c.req.query("state") ?? "";
@@ -296,6 +318,7 @@ export function registerGithubOauth<TEnv>(
         event: "oauth_callback",
         outcome: "invalid_state",
         provider: "github",
+        ...(Object.keys(ua).length ? { meta: ua } : {}),
       });
       return c.json({ error: "invalid_state" }, 400);
     }
@@ -308,7 +331,7 @@ export function registerGithubOauth<TEnv>(
         provider: "github",
         ...(flowId ? { flowId } : {}),
         ...(userId ? { userId } : {}),
-        meta: { mode: mode ?? "login", ...meta },
+        meta: { mode: mode ?? "login", ...ua, ...meta },
       });
 
     // GitHub 用 ?error= 回报用户拒绝授权，此时没有 code；state 已验过，回跳地址可信
@@ -411,7 +434,7 @@ export function registerGithubOauth<TEnv>(
       userId: verified.userId,
       ...(flowId ? { flowId } : {}),
       ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
-      meta: { mode: "login" },
+      meta: { mode: "login", ...ua },
     });
     return c.redirect(withParam(redirect, "otc", otc), 302);
   });
