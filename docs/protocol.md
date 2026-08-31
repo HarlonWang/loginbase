@@ -108,6 +108,15 @@ Bearer 鉴权。吊销该用户全部会话。成功 `204`；无/坏 token `401`
 
 校验 `redirect` 命中服务端白名单（`allowedRedirects`，结构化匹配：scheme + host 精确一致、path 允许前缀扩展，防开放重定向）→ 生成 `state`（32B random，KV 存 600s、单次使用）→ `302` 跳转 GitHub authorize（scope 取服务端配置 `socials.github.scope`，默认 `user:email`）。
 
+**可选统计参数（1.7.0 起）**：客户端可附带自述信息，服务端校验后随 `state` 透传、落进
+`auth_events` 的 `meta`（**只进统计，不进任何响应体**）；非法值静默丢弃、不影响登录。
+
+| 参数 | 值域 | 含义 |
+|---|---|---|
+| `browser_tier` | `auth_tab` / `custom_tab` / `system_browser` | 客户端选定的承载通路 |
+| `browser_pkg` | `[A-Za-z0-9._]{1,100}` | 客户端**意图**打开的浏览器包名（实际到达者以请求 UA 为准） |
+| `client_flow_id` | `[A-Za-z0-9_-]{1,64}` | 消费方埋点体系的流程标识，用于跨库对齐；**应每次流程一个值，勿传用户级稳定标识**（会进 URL 与统计表） |
+
 | 失败 | 状态码 | 响应 |
 |---|---|---|
 | redirect 缺失或不在白名单 | 400 | `{ "error": "invalid_redirect" }` |

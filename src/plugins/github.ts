@@ -35,6 +35,31 @@ function browserMeta(c: { req: { header(name: string): string | undefined } }): 
   return out;
 }
 
+// start 的可选客户端自述参数（协议见 docs/protocol.md）：browser_tier = 客户端选定的
+// 承载通路，browser_pkg = 客户端**意图**打开的浏览器包名（与 meta.ua 的**实际**到达
+// 浏览器是刻意的对照组），client_flow_id = 消费方埋点的流程标识（跨库对齐用）。
+// 白名单校验、非法静默丢弃——统计参数绝不能成为登录的故障源
+const BROWSER_TIERS = new Set(["auth_tab", "custom_tab", "system_browser"]);
+const BROWSER_PKG_PATTERN = /^[A-Za-z0-9._]{1,100}$/;
+const CLIENT_FLOW_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+interface ClientProbe {
+  browserTier?: string;
+  browserPkg?: string;
+  clientFlowId?: string;
+}
+
+function clientProbe(c: { req: { query(name: string): string | undefined } }): ClientProbe {
+  const out: ClientProbe = {};
+  const tier = c.req.query("browser_tier");
+  if (tier && BROWSER_TIERS.has(tier)) out.browserTier = tier;
+  const pkg = c.req.query("browser_pkg");
+  if (pkg && BROWSER_PKG_PATTERN.test(pkg)) out.browserPkg = pkg;
+  const cfid = c.req.query("client_flow_id");
+  if (cfid && CLIENT_FLOW_ID_PATTERN.test(cfid)) out.clientFlowId = cfid;
+  return out;
+}
+
 interface StateRecord {
   redirect: string;
   /**
@@ -50,6 +75,10 @@ interface StateRecord {
    * **与 state / otc 是两回事**——那两个是单次凭证，绝不能写进长期保存的统计表。
    */
   flowId?: string;
+  /** start 的客户端自述参数（见 clientProbe），随 state 透传使全链统计事件都带上 */
+  browserTier?: string;
+  browserPkg?: string;
+  clientFlowId?: string;
 }
 
 /** 兑换后**返回给客户端**的载荷——形态即协议，加字段等于改协议 */
@@ -69,6 +98,9 @@ interface OtcStoredPayload extends OtcPayload {
   /** 登录成功事件要记「谁登录了」，而 exchange 端点本身无从得知，故随载荷带下来 */
   userId?: string;
   flowId?: string;
+  browserTier?: string;
+  browserPkg?: string;
+  clientFlowId?: string;
 }
 
 // 结构化校验而非字符串前缀：startsWith("https://example.com") 会被
@@ -237,19 +269,21 @@ export function registerGithubOauth<TEnv>(
       return c.json({ error: "invalid_redirect" }, 400);
     }
 
+    const probe = clientProbe(c);
     const state = randomToken();
     const flowId = crypto.randomUUID();
-    const record: StateRecord = { redirect, flowId };
+    const record: StateRecord = { redirect, flowId, ...probe };
     await cfg(c).kv.put(`oauth:state:${state}`, JSON.stringify(record), {
       expirationTtl: STATE_TTL_SECONDS,
     });
 
+    const startMeta = { ...ua, ...probe };
     track(c, {
       event: "oauth_start",
       outcome: "ok",
       provider: "github",
       flowId,
-      ...(Object.keys(ua).length ? { meta: ua } : {}),
+      ...(Object.keys(startMeta).length ? { meta: startMeta } : {}),
     });
     return c.redirect(buildAuthorizeUrl(gh, callbackUrlFor(c, gh), state), 302);
   });
@@ -323,7 +357,13 @@ export function registerGithubOauth<TEnv>(
       return c.json({ error: "invalid_state" }, 400);
     }
     await cfg(c).kv.delete(stateKey); // 单次使用，验证即焚
-    const { redirect, mode, userId, flowId } = JSON.parse(rawState) as StateRecord;
+    const { redirect, mode, userId, flowId, browserTier, browserPkg, clientFlowId } =
+      JSON.parse(rawState) as StateRecord;
+    const probe: ClientProbe = {
+      ...(browserTier ? { browserTier } : {}),
+      ...(browserPkg ? { browserPkg } : {}),
+      ...(clientFlowId ? { clientFlowId } : {}),
+    };
     const trackCallback = (outcome: string, meta?: Record<string, unknown>) =>
       track(c, {
         event: "oauth_callback",
@@ -331,7 +371,7 @@ export function registerGithubOauth<TEnv>(
         provider: "github",
         ...(flowId ? { flowId } : {}),
         ...(userId ? { userId } : {}),
-        meta: { mode: mode ?? "login", ...ua, ...meta },
+        meta: { mode: mode ?? "login", ...ua, ...probe, ...meta },
       });
 
     // GitHub 用 ?error= 回报用户拒绝授权，此时没有 code；state 已验过，回跳地址可信
@@ -421,6 +461,7 @@ export function registerGithubOauth<TEnv>(
       ...(verified.user !== undefined ? { user: verified.user } : {}),
       userId: verified.userId,
       ...(flowId ? { flowId } : {}),
+      ...probe,
     };
     await cfg(c).kv.put(`oauth:otc:${otc}`, JSON.stringify(payload), {
       expirationTtl: OTC_TTL_SECONDS,
@@ -434,7 +475,7 @@ export function registerGithubOauth<TEnv>(
       userId: verified.userId,
       ...(flowId ? { flowId } : {}),
       ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
-      meta: { mode: "login", ...ua },
+      meta: { mode: "login", ...ua, ...probe },
     });
     return c.redirect(withParam(redirect, "otc", otc), 302);
   });
@@ -461,10 +502,17 @@ export function registerGithubOauth<TEnv>(
     await cfg(c).kv.delete(key); // 单次使用，兑换即焚
 
     // 解构即剥离：payload 的类型收窄回 OtcPayload，统计字段进不了响应体
-    const { userId, flowId, ...payload } = JSON.parse(raw) as OtcStoredPayload;
+    const { userId, flowId, browserTier, browserPkg, clientFlowId, ...payload } =
+      JSON.parse(raw) as OtcStoredPayload;
+    const probe: ClientProbe = {
+      ...(browserTier ? { browserTier } : {}),
+      ...(browserPkg ? { browserPkg } : {}),
+      ...(clientFlowId ? { clientFlowId } : {}),
+    };
     const trace = {
       ...(userId ? { userId } : {}),
       ...(flowId ? { flowId } : {}),
+      ...(Object.keys(probe).length ? { meta: { ...probe } } : {}),
     };
     track(c, {
       event: "oauth_exchange",
