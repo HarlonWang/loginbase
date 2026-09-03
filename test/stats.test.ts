@@ -328,9 +328,15 @@ describe("OAuth 漏斗", () => {
           { status: 200 }
         );
       }
-      if (url.startsWith("https://api.github.com/user")) {
+      if (url.startsWith("https://api.github.com/applications/") && url.endsWith("/token")) {
+        return new Response(JSON.stringify({ user: { id: 42, login: "octocat" } }), {
+          status: 200,
+        });
+      }
+      if (url === "https://api.github.com/user/42") {
         return new Response(JSON.stringify({ id: 42, login: "octocat" }), { status: 200 });
       }
+      if (url === "https://api.github.com/user") throw new Error("GET /user must not be called");
       throw new Error(`unexpected fetch: ${url}`);
     });
   });

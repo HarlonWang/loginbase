@@ -10,8 +10,12 @@ function mockGithub(fetchSpy: ReturnType<typeof vi.spyOn>, opts: {
   token?: string | null;
   userId?: number;
   emails?: Array<{ email: string; primary: boolean; verified: boolean }>;
+  /** check-token 的 HTTP 状态；404 = token 无效或不属于本 App */
+  checkStatus?: number;
+  /** false = 按 id 取公开档案失败（不致命） */
+  profile?: boolean;
 } = {}) {
-  const { token = "gh-token", userId = 12345, emails } = opts;
+  const { token = "gh-token", userId = 12345, emails, checkStatus = 200, profile = true } = opts;
   fetchSpy.mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.startsWith("https://github.com/login/oauth/access_token")) {
@@ -30,7 +34,18 @@ function mockGithub(fetchSpy: ReturnType<typeof vi.spyOn>, opts: {
         { status: 200 }
       );
     }
-    if (url.startsWith("https://api.github.com/user")) {
+    if (url.startsWith("https://api.github.com/applications/") && url.endsWith("/token")) {
+      if (checkStatus !== 200) return new Response("{}", { status: checkStatus });
+      return new Response(
+        JSON.stringify({
+          scopes: ["user:email"],
+          user: { id: userId, login: "octocat", avatar_url: "https://a.png" },
+        }),
+        { status: 200 }
+      );
+    }
+    if (url === `https://api.github.com/user/${userId}`) {
+      if (!profile) return new Response("{}", { status: 404 });
       return new Response(
         JSON.stringify({
           id: userId,
@@ -42,6 +57,8 @@ function mockGithub(fetchSpy: ReturnType<typeof vi.spyOn>, opts: {
         { status: 200 }
       );
     }
+    // 固定 URL 加凭据的 GET /user 不该再被调用（docs/cache-safety.md）
+    if (url === "https://api.github.com/user") throw new Error("GET /user must not be called");
     throw new Error(`unexpected fetch: ${url}`);
   });
 }
@@ -276,6 +293,24 @@ describe("GET /auth/oauth/github/callback + POST /auth/oauth/exchange", () => {
     expect(new URL(res.headers.get("Location")!).searchParams.get("error")).toBe(
       "oauth_failed"
     );
+  });
+
+  it("check-token 404（token 无效或不属于本 App）→ 302 redirect?error=token_check_failed", async () => {
+    const state = await startAndGetState();
+    mockGithub(fetchSpy, { checkStatus: 404 });
+    const res = await callback(state);
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("Location")!).searchParams.get("error")).toBe(
+      "token_check_failed"
+    );
+  });
+
+  it("按 id 取公开档案失败不致命：身份已由 check-token 定，仍签发 otc", async () => {
+    const state = await startAndGetState();
+    mockGithub(fetchSpy, { profile: false });
+    const res = await callback(state);
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("Location")!).searchParams.get("otc")).not.toBeNull();
   });
 
   it("无 verified 邮箱 → 302 redirect?error=oauth_no_email", async () => {

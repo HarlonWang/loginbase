@@ -2,7 +2,7 @@
 
 > **本文件是 API 契约的唯一权威**，只住服务端仓——客户端仓 `HarlonWang/loginbase-kt` 只链接、不留副本。协议变更必须与服务端实现同 commit，并在客户端仓开跟进 issue、客户端版本落地前不关（2026-08-13 分仓后的纪律，见 CLAUDE.md 铁律与 design.md）。
 >
-> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.6.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
+> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.8.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
 >
 > 结构与决策背景见 [server-design.md](server-design.md)；本文只记 wire 层事实。
 
@@ -147,6 +147,7 @@ GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注�
 | state 缺失/无效/已使用 | `400 { "error": "invalid_state" }`（redirect 未知，无法回跳） |
 | GitHub 回 `?error=`（用户拒绝授权等，无 `code`） | `302 {redirect}?error={error}`（典型 `access_denied`）；`error` 不匹配 `[A-Za-z0-9_]{1,64}` 或缺省时回落 `no_code`。**state 有效才走这里**，否则同上一行 |
 | GitHub 换码或取用户失败 | `302 {redirect}?error=oauth_failed` |
+| check-token 判定 token 无效或不属于本 App（1.8.0 起，身份来自 `POST /applications/{client_id}/token`） | `302 {redirect}?error=token_check_failed` |
 | 无 verified 邮箱 | login：`302 {redirect}?error=oauth_no_email`；**link 分支不失败**——userId 已定，email 只是附加信息 |
 | onVerified / onLinked 抛错 | `302 {redirect}?error=internal` |
 | onLinked 返回 `{ok:false, reason}` | `302 {redirect}?error={reason}`（App 自定，典型 `already_linked`）；`reason` 不匹配 `[A-Za-z0-9_]{1,64}` 时回落 `internal` |

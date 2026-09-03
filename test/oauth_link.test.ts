@@ -32,11 +32,15 @@ function mockGithub(
         { status: 200 }
       );
     }
-    if (url.startsWith("https://api.github.com/user")) {
-      return new Response(JSON.stringify({ id: userId, login: "linkcat" }), {
+    if (url.startsWith("https://api.github.com/applications/") && url.endsWith("/token")) {
+      return new Response(JSON.stringify({ user: { id: userId, login: "linkcat" } }), {
         status: 200,
       });
     }
+    if (url === `https://api.github.com/user/${userId}`) {
+      return new Response(JSON.stringify({ id: userId, login: "linkcat" }), { status: 200 });
+    }
+    if (url === "https://api.github.com/user") throw new Error("GET /user must not be called");
     throw new Error(`unexpected fetch: ${url}`);
   });
 }
