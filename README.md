@@ -112,6 +112,8 @@ The client can print exactly what to whitelist — call `Loginbase.redirectUri(c
 
 Cloudflare Workers with D1 and KV bindings · `hono` ^4.12.8 · a [Resend](https://resend.com) account for delivery.
 
+**The zone the Worker runs on must have no cache rule that makes third-party subrequests cacheable.** loginbase's GitHub sign-in calls `api.github.com/user` with the user's token as a Worker subrequest, and subrequests inherit the zone's Cache Rules. A "Cache everything" rule on that zone caches the response by URL and serves one user's profile to the next — cross-account sign-in. Keep the zone at zero cache rules; a disabled rule does not count. Details and detection in [Cache safety](docs/cache-safety.md).
+
 ## Not included
 
 loginbase deliberately stops at authentication and sessions. It has no password login, no OIDC or SAML, no multi-tenancy, no admin UI, and no user profile storage — your `onVerified` owns the user table. Sign-in providers are email and GitHub; email delivery is Resend; the runtime is Cloudflare Workers. If you need an identity provider rather than a login foundation, use one.
@@ -122,6 +124,7 @@ loginbase deliberately stops at authentication and sessions. It has no password 
 |---|---|
 | [Protocol contract](docs/protocol.md) | The wire API — single source of truth for both halves |
 | [Server design](docs/server-design.md) | Configuration surface, session model, hooks |
+| [Cache safety](docs/cache-safety.md) | **Read before deploying** — why the zone must have no cache rules |
 | [Email and identity](docs/email-identity.md) | **Read before integrating** — why an email address is a poor identity anchor |
 | [Login analytics](docs/stats-design.md) | Event schema and metric definitions |
 | [Design decisions](docs/design.md) | Why a library instead of a service, and other roads not taken |

@@ -363,6 +363,7 @@ test/             # vitest + @cloudflare/vitest-pool-workers
 - 吊销延迟 ≤ access TTL（1h）为已声明的模型代价；`DELETE /sessions*` 只终结 refresh 能力。
 - 救活护栏（1h/3 次）封死「盗用方与本人交替刷新」的无限救活通道。
 - 供应链：依赖准入 + lockfile + trusted publishing/provenance（铁律 1 与分发节）。
+- 部署环境：Worker 所在 zone 不得有使第三方子请求可缓存的缓存规则，否则 GitHub `/user` 响应会跨用户复用；约束与排查见 `docs/cache-safety.md`。
 
 ## 已知边界与将来项
 

@@ -112,6 +112,8 @@ socials: {
 
 Cloudflare Workers，带 D1 与 KV binding · `hono` ^4.12.8 · 一个用于投递的 [Resend](https://resend.com) 账号。
 
+**Worker 所在的 zone 不能有任何让第三方子请求可缓存的缓存规则。** loginbase 的 GitHub 登录会以 Worker 子请求的方式、带着用户 token 请求 `api.github.com/user`，而子请求继承所在 zone 的 Cache Rules。zone 上一条「Cache everything」会把这个响应按 URL 缓存，把前一个用户的资料发给下一个用户，造成账号串号。请把 zone 保持在零缓存规则；disabled 的规则不算。机制与排查见 [缓存安全](docs/cache-safety.md)。
+
 ## 不包含什么
 
 loginbase 刻意止步于认证与会话：没有密码登录，没有 OIDC / SAML，没有多租户，没有管理后台，也不存用户档案——用户表归你的 `onVerified` 管。登录方式只有邮箱与 GitHub，邮件只走 Resend，运行时只有 Cloudflare Workers。如果你要的是一个身份提供商而不是一个登录底座，请去用身份提供商。
@@ -122,6 +124,7 @@ loginbase 刻意止步于认证与会话：没有密码登录，没有 OIDC / SA
 |---|---|
 | [协议契约](docs/protocol.md) | wire API——两端的唯一权威 |
 | [服务端设计](docs/server-design.md) | 配置面、会话模型、钩子 |
+| [缓存安全](docs/cache-safety.md) | **部署前必读** —— 为什么所在 zone 不能有缓存规则 |
 | [邮箱与身份](docs/email-identity.md) | **接入前必读**——为什么邮箱不适合当身份锚点 |
 | [登录统计](docs/stats-design.md) | 事件模型与指标口径 |
 | [设计决策](docs/design.md) | 为什么是库而不是服务，以及那些没走的路 |
