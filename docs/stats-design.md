@@ -234,7 +234,7 @@
 | `code_verify` | `ok` / `invalid_code` / `code_not_found` / `too_many_attempts` | — | C2 分子、**C3** | 新增 |
 | `login` | — | provider、user_id、is_new_user、country | **A2 A3 B1 K3** | 新增 |
 | `oauth_start` | `ok` / `invalid_redirect` | flow_id、mode | D4 分母 | 新增 |
-| `oauth_callback` | `issued` / `linked` / `invalid_state` / `access_denied`（及 GitHub 回传的其他 `?error=`）/ `no_code` / `oauth_failed` / `no_email` / `link_conflict` / `internal` | flow_id、mode | D4 分子、**D11** 被减数 | 新增 |
+| `oauth_callback` | `issued` / `linked` / `invalid_state` / `access_denied`（及 GitHub 回传的其他 `?error=`）/ `no_code` / `oauth_failed` / `token_check_failed`（1.8.0）/ `no_email` / `link_conflict` / `internal` | flow_id、mode | D4 分子、**D11** 被减数 | 新增 |
 | `oauth_exchange` | `ok` / `invalid_otc` | flow_id、user_id | **D11** 减数 | 新增 |
 | `refresh` | `ok` / `rescued` / `reuse_revoked` / `guardrail_revoked` / `invalid` | user_id、family_id | **F2** | 已有三个异常 outcome，**缺 `ok`**（F2 至今没有分母） |
 | `rate_limited` | `cooldown` / `email` / `ip` | endpoint | H1 | 新增（2026-08-17 追加，见 6.10） |
@@ -390,7 +390,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_events_flow     ON auth_events(flow_id);
 | `code_verify` | `ok` / `invalid_code` / `code_not_found` / `too_many_attempts` / `internal` | `/code/verify` 四个返回分支 + `onVerified` 抛错处 | C2 分子、**C3** |
 | `login` | — | `/code/verify` 建会话后（provider=email）；`/oauth/exchange` 成功时（provider=github） | **A2 A3 B1 K3** |
 | `oauth_start` | `ok` / `invalid_redirect` | `github.ts` `/oauth/github/start` 与 `/link/start` 两处 | D4 分母 |
-| `oauth_callback` | `issued` / `linked` / `invalid_state` / `oauth_failed` / `no_email` / `link_conflict` / `internal` | callback 全部返回分支 | D4 分子、**D11** |
+| `oauth_callback` | `issued` / `linked` / `invalid_state` / `oauth_failed` / `token_check_failed`（1.8.0）/ `no_email` / `link_conflict` / `internal` | callback 全部返回分支 | D4 分子、**D11** |
 | `oauth_exchange` | `ok` / `invalid_otc` | `/oauth/exchange` 两个分支 | **D11** |
 | `refresh` | `ok` / `rescued` / `reuse_revoked` / `guardrail_revoked` / `invalid` | `/refresh`；`ok` 是**新增的成功路径** | **F2** |
 | `rate_limited` | `cooldown` / `email` / `ip` | `/code/send` 的 429 分支 | H1 |

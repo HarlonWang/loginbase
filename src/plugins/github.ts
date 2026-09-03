@@ -12,7 +12,9 @@ import { signAccessToken, ACCESS_TTL_SECONDS } from "../token.js";
 
 const GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN = "https://github.com/login/oauth/access_token";
-const GITHUB_API_USER = "https://api.github.com/user";
+const GITHUB_API_CHECK_TOKEN = (clientId: string) =>
+  `https://api.github.com/applications/${encodeURIComponent(clientId)}/token`;
+const GITHUB_API_USER_BY_ID = (id: number) => `https://api.github.com/user/${id}`;
 const GITHUB_API_EMAILS = "https://api.github.com/user/emails";
 
 const STATE_TTL_SECONDS = 600;
@@ -183,15 +185,20 @@ interface GithubIdentity {
   verifiedEmails: string[];
 }
 
+type GithubIdentityResult =
+  | { ok: true; identity: GithubIdentity }
+  | { ok: false; reason: "oauth_failed" | "token_check_failed" };
+
 /**
- * 换 token → 取用户 → 取邮箱。login 与 link 两条流程共用（callback 是同一个端点：
- * GitHub OAuth App 的回调地址注册在 GitHub 侧，多一个即多一处配置漂移）。
- * 返回 null = 换码或取用户失败，调用方回跳 oauth_failed。
+ * 换 token → check-token 取身份 → 按 id 取公开档案 → 取邮箱。login 与 link 两条流程共用
+ * （callback 是同一个端点：GitHub OAuth App 的回调地址注册在 GitHub 侧，多一个即多一处配置漂移）。
+ * 身份来自 check-token（POST）而不是 `GET /user`：固定 URL 加用户凭据的 GET 会被 zone 的
+ * 缓存规则跨用户复用，见 docs/cache-safety.md。
  */
 async function fetchGithubIdentity(
   gh: GithubSocialConfig,
   code: string
-): Promise<GithubIdentity | null> {
+): Promise<GithubIdentityResult> {
   // server-side 换 token：client_secret 只在此出现，客户端不可见
   const tokenRes = await fetch(GITHUB_TOKEN, {
     method: "POST",
@@ -206,7 +213,7 @@ async function fetchGithubIdentity(
     ? ((await tokenRes.json().catch(() => null)) as { access_token?: string } | null)
     : null;
   const ghToken = tokenBody?.access_token;
-  if (!ghToken) return null;
+  if (!ghToken) return { ok: false, reason: "oauth_failed" };
 
   // GitHub API 要求 User-Agent
   const ghHeaders = {
@@ -214,9 +221,37 @@ async function fetchGithubIdentity(
     Accept: "application/vnd.github+json",
     "User-Agent": "loginbase",
   };
-  const userRes = await fetch(GITHUB_API_USER, { headers: ghHeaders });
-  if (!userRes.ok) return null;
-  const ghUser = (await userRes.json()) as { id: number } & Record<string, unknown>;
+
+  const checkRes = await fetch(GITHUB_API_CHECK_TOKEN(gh.clientId), {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${btoa(`${gh.clientId}:${gh.clientSecret}`)}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "User-Agent": "loginbase",
+    },
+    body: JSON.stringify({ access_token: ghToken }),
+  });
+  const checked = checkRes.ok
+    ? ((await checkRes.json().catch(() => null)) as {
+        user?: { id?: number; login?: string } & Record<string, unknown>;
+      } | null)
+    : null;
+  const owner = checked?.user;
+  if (typeof owner?.id !== "number") return { ok: false, reason: "token_check_failed" };
+
+  // 展示字段（name、bio 等）不在 check-token 响应里，按耐久 id 补取；URL 含用户 id，
+  // 被缓存也只命中本人。取不到不致命，身份已由 check-token 定。
+  let ghUser: { id: number } & Record<string, unknown> = { ...owner, id: owner.id };
+  const profileRes = await fetch(GITHUB_API_USER_BY_ID(owner.id), { headers: ghHeaders }).catch(
+    () => null
+  );
+  if (profileRes?.ok) {
+    const profile = (await profileRes.json().catch(() => null)) as
+      | ({ id?: number } & Record<string, unknown>)
+      | null;
+    if (profile && profile.id === owner.id) ghUser = { ...profile, ...owner, id: owner.id };
+  }
 
   const emailsRes = await fetch(GITHUB_API_EMAILS, { headers: ghHeaders });
   const emails = emailsRes.ok
@@ -233,10 +268,13 @@ async function fetchGithubIdentity(
     emails.find((e) => e.verified)?.email;
 
   return {
-    ghUser,
-    ghToken,
-    ...(email ? { email: normalize(email) } : {}),
-    verifiedEmails,
+    ok: true,
+    identity: {
+      ghUser,
+      ghToken,
+      ...(email ? { email: normalize(email) } : {}),
+      verifiedEmails,
+    },
   };
 }
 
@@ -381,12 +419,12 @@ export function registerGithubOauth<TEnv>(
       return c.redirect(withParam(redirect, "error", reason), 302);
     }
 
-    const identity = await fetchGithubIdentity(gh, code);
-    if (!identity) {
-      trackCallback("oauth_failed");
-      return c.redirect(withParam(redirect, "error", "oauth_failed"), 302);
+    const fetched = await fetchGithubIdentity(gh, code);
+    if (!fetched.ok) {
+      trackCallback(fetched.reason);
+      return c.redirect(withParam(redirect, "error", fetched.reason), 302);
     }
-    const { ghUser, ghToken, email, verifiedEmails } = identity;
+    const { ghUser, ghToken, email, verifiedEmails } = fetched.identity;
 
     const userAgent = c.req.header("User-Agent") ?? undefined;
     const ip = c.req.header("CF-Connecting-IP") ?? undefined;

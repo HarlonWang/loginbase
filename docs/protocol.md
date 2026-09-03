@@ -147,6 +147,7 @@ GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注�
 | state 缺失/无效/已使用 | `400 { "error": "invalid_state" }`（redirect 未知，无法回跳） |
 | GitHub 回 `?error=`（用户拒绝授权等，无 `code`） | `302 {redirect}?error={error}`（典型 `access_denied`）；`error` 不匹配 `[A-Za-z0-9_]{1,64}` 或缺省时回落 `no_code`。**state 有效才走这里**，否则同上一行 |
 | GitHub 换码或取用户失败 | `302 {redirect}?error=oauth_failed` |
+| check-token 判定 token 无效或不属于本 App（1.8.0 起，身份来自 `POST /applications/{client_id}/token`） | `302 {redirect}?error=token_check_failed` |
 | 无 verified 邮箱 | login：`302 {redirect}?error=oauth_no_email`；**link 分支不失败**——userId 已定，email 只是附加信息 |
 | onVerified / onLinked 抛错 | `302 {redirect}?error=internal` |
 | onLinked 返回 `{ok:false, reason}` | `302 {redirect}?error={reason}`（App 自定，典型 `already_linked`）；`reason` 不匹配 `[A-Za-z0-9_]{1,64}` 时回落 `internal` |

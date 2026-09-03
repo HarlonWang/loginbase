@@ -306,7 +306,7 @@ onLinked?: (identity: {
 设计目标：token 永不进 URL 与系统日志（移动端 deepLink 回跳是重灾区），复用 `onVerified` 与同一套会话模型。
 
 1. `GET /oauth/github/start?redirect={deepLink}` → 生成 `state` 存 KV（10min、单次）→ 302 GitHub authorize（server-side flow，`client_secret` 换码，GitHub OAuth App 不支持 PKCE）；
-2. `GET /oauth/github/callback?code&state` → 验 state → 换 access token → GitHub API 取 primary + verified email 与 user id → `onVerified({provider:"github", providerUserId, email})` → `createSession` → 生成**一次性授权码** `otc` 存 KV（60s、单次）→ 302 `{deepLink}?otc=…`；
+2. `GET /oauth/github/callback?code&state` → 验 state → 换 access token → `POST /applications/{client_id}/token` 取 token 属主 id（1.8.0 起，不再 `GET /user`，原因见 `docs/cache-safety.md`）→ `GET /user/{id}` 补展示字段（失败不致命）→ `GET /user/emails` 取 primary + verified email → `onVerified({provider:"github", providerUserId, email})` → `createSession` → 生成**一次性授权码** `otc` 存 KV（60s、单次）→ 302 `{deepLink}?otc=…`；
 3. `POST /oauth/exchange` `{otc}` → 验证即焚 → 返回 `{accessToken, refreshToken, isNewUser?, user?}`（与 verify 同构）。
 
 **link 分支（1.2.0）**：`POST /oauth/github/link/start`（Bearer）→ 校验 redirect 白名单 → state 载荷扩为 `{ redirect, mode: "link", userId }` → 返回 `200 { authorizeUrl }`（不 302——浏览器导航带不了 `Authorization` 头，故必须两步）；callback **复用同一端点**（GitHub OAuth App 的 callback URL 注册在 GitHub 侧，多一个即多一处配置漂移），按 state 载荷的 `mode` 分流：无 mode 走现有 login 路径（字节不变），`mode==="link"` → `onLinked` → 不建会话、不发 token → `302 {redirect}?linked=github` 或 `?error=already_linked`。`mode` 显式写出而非靠 `userId` 是否存在推断，便于将来加流程。

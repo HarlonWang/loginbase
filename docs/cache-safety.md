@@ -27,6 +27,8 @@ Tiered Cache 开启时，缓存条目在上层节点被多个数据中心共享�
 - 可用的启发式判据：同一 `user_id` 在两小时内相邻两次 `oauth_callback`，而 `country` 或 `colo` 不同；或出现「登录 → 立即 `session_revoked` → 再登录」的形态。
 - 受害账户的 `gh_token_updated_at` 会等于入侵者登录的时间；账户主人的 App 会拿着别人的 GitHub token 访问 GitHub。
 
-## 库侧当前状态
+## 库侧当前状态（1.8.0）
 
-`src/plugins/github.ts` 对上述两个接口的请求是不带任何缓存控制的 `fetch`。在零缓存规则的 zone 上，它们受 GitHub 响应头与 Cloudflare 默认行为保护，不会被缓存；库本身不对 zone 配置做任何检测。
+- 身份来自 `POST /applications/{client_id}/token`（GitHub 的 token introspection，Basic 认证用 client_id 与 client_secret）。POST 不受缓存规则影响；它同时证明这枚 token 属于本 App，失败回跳 `token_check_failed`。
+- 展示字段来自 `GET /user/{id}`，URL 含耐久数字 id，被缓存也只命中本人；取不到不影响登录。
+- `GET /user/emails` 仍是固定 URL 加用户凭据的 GET，不带缓存控制。它只影响锚点为邮箱的建号与合并，在零缓存规则的 zone 上受 GitHub 响应头与 Cloudflare 默认行为保护。库本身不对 zone 配置做任何检测。
