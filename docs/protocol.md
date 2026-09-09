@@ -2,7 +2,7 @@
 
 > **本文件是 API 契约的唯一权威**，只住服务端仓——客户端仓 `HarlonWang/loginbase-kt` 只链接、不留副本。协议变更必须与服务端实现同 commit，并在客户端仓开跟进 issue、客户端版本落地前不关（2026-08-13 分仓后的纪律，见 CLAUDE.md 铁律与 design.md）。
 >
-> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.8.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
+> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.9.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
 >
 > 结构与决策背景见 [server-design.md](server-design.md)；本文只记 wire 层事实。
 
@@ -13,7 +13,22 @@
 - 错误响应统一形状：`{ "error": string, ...附加字段 }`，HTTP 状态码与 error 码一一对应。
 - 鉴权端点使用 `Authorization: Bearer {accessToken}`。
 - 客户端 IP 取 `CF-Connecting-IP`，UA 取 `User-Agent`（会话元数据与 IP 限流用）。
+- **客户端标识（1.9.0 起，可选）**：App 直连请求带 `X-Client-Version` 与 `X-Client-Platform` 两个头，浏览器承载的 `oauth/{provider}/start` 用同名查询参数 `client_version` / `client_platform`（见下方「客户端标识」节）。**服务端只认这两个结构化来源，永不从 `User-Agent` 解析版本或平台**——UA 仍照存作日志与会话元数据。
 - email 归一化：`trim().toLowerCase()`，格式校验 `/^\S+@\S+\.\S+$/`；unicode 大小写折叠与 `+` 别名**不处理**。
+
+## 客户端标识（1.9.0 起）
+
+统计切片轴「App 版本 / 平台」的来源（stats-design.md 档 1）。**只进统计与钩子的 `requestMeta`，不进任何响应体**；非法值静默丢弃、不带即为空，**错误码表不新增任何一条**——客户端无需为此写任何错误处理分支。
+
+| 载体 | 适用请求 | 字段 | 值域 |
+|---|---|---|---|
+| 请求头 `X-Client-Version` | 全部 App 直连端点（code/*、refresh、sessions、oauth/exchange、oauth/*/link/start） | App 版本 | `[0-9A-Za-z.+-]{1,32}` |
+| 请求头 `X-Client-Platform` | 同上 | 平台 | `android` / `ios` / `web` / `desktop`（只认小写） |
+| 查询参数 `client_version` / `client_platform` | `GET /oauth/{provider}/start`（浏览器发出，带不了 App 的头） | 同上 | 同上 |
+
+落点：`auth_events.client_version` / `client_platform` 两列（migration 0003）。OAuth 链路里 start 与 callback 取 **start 参数**（随 `state` 透传，`invalid_redirect` 也记），exchange 与 `login` 取 **exchange 请求的头**；link 链路的 callback 取 `link/start` 请求的头。`onVerified` / `onLinked` 的 `requestMeta` 同时带 `clientVersion` / `clientPlatform`（缺席即未上报）。
+
+**版本与设备的自由文本仍走 `User-Agent`**（建议形态 `App/1.5.0 (Android 14; Pixel 7) loginbase-kt/0.4.0`），服务端原样存进 `sessions.user_agent`，供人工排障；**它不是统计轴的来源**。
 
 ## 令牌模型
 
@@ -191,6 +206,8 @@ GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注�
 | `oauth:otc:{otc}` | 60s | 一次性授权码载荷（单次） |
 
 ## 版本历史
+
+- **1.9.0**（2026-09）：新增**可选**客户端标识——App 直连请求的 `X-Client-Version` / `X-Client-Platform` 头与 `oauth/{provider}/start` 的 `client_version` / `client_platform` 参数，落 `auth_events` 新增两列（migration 0003，非幂等），并透传进 `onVerified` / `onLinked` 的 `requestMeta`。**wire 向后兼容、错误码零新增**：不带即为空；老服务端忽略未知头与参数，故客户端可先于服务端发布。服务端未跑 0003 时事件按旧表形态落库并告警一次 `stats_schema_outdated`。同版本定下铁律：服务端永不从 UA 解析版本或平台（CLAUDE.md）。
 
 - **1.6.0**（2026-08）：GitHub callback 收到 `?error=`（无 `code`）时改为 **302 回跳** `{redirect}?error={error}`（典型 `access_denied`，字符集不合法或缺省时回落 `no_code`），并以该值作为 `oauth_callback` 的 outcome。此前它与「state 读不出」合并在一个分支，一律 `400 invalid_state`——把「用户在授权页点了拒绝」记成了 state 无效，且用户被留在浏览器的错误页上收不到回跳。**wire 向后兼容**：新增的是一种已存在形态的回跳（`?error=` 早就是 callback 的失败约定），不认识 `access_denied` 的老客户端按既有未知 error 分支处理。**state 无效时的 400 不变**——那种情况回跳地址不可信。
 

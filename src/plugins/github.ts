@@ -7,7 +7,15 @@ import { trimmedField } from "../body.js";
 import { createAuthMiddleware, type AuthVariables } from "../middleware.js";
 import { generateRefreshToken as randomToken } from "../session.js";
 import { createSession } from "../session.js";
-import { createTracker } from "../stats.js";
+import {
+  createTracker,
+  clientOf,
+  clientVersionOf,
+  clientPlatformOf,
+  clientRequestMeta,
+  CLIENT_ID_ABSENT,
+  type ClientId,
+} from "../stats.js";
 import { signAccessToken, ACCESS_TTL_SECONDS } from "../token.js";
 
 const GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize";
@@ -62,6 +70,27 @@ function clientProbe(c: { req: { query(name: string): string | undefined } }): C
   return out;
 }
 
+// 客户端标识（版本 / 平台）与 probe 分开：它们落列不落 meta。浏览器发出的 start 带不了 App 的头，
+// 只能走 URL 参数；校验规则与请求头同一套（stats.ts）
+function clientFromQuery(c: { req: { query(name: string): string | undefined } }): ClientId {
+  return {
+    version: clientVersionOf(c.req.query("client_version")),
+    platform: clientPlatformOf(c.req.query("client_platform")),
+  };
+}
+
+/** state 里以平铺字段存（与 probe 同形），读回时拼回 ClientId */
+function clientFromState(rec: { clientVersion?: string; clientPlatform?: string }): ClientId {
+  return { version: rec.clientVersion ?? null, platform: rec.clientPlatform ?? null };
+}
+
+function clientToState(client: ClientId): { clientVersion?: string; clientPlatform?: string } {
+  return {
+    ...(client.version ? { clientVersion: client.version } : {}),
+    ...(client.platform ? { clientPlatform: client.platform } : {}),
+  };
+}
+
 interface StateRecord {
   redirect: string;
   /**
@@ -81,6 +110,9 @@ interface StateRecord {
   browserTier?: string;
   browserPkg?: string;
   clientFlowId?: string;
+  /** 客户端标识（落列不落 meta）：login 来自 start 参数，link 来自 link/start 的请求头 */
+  clientVersion?: string;
+  clientPlatform?: string;
 }
 
 /** 兑换后**返回给客户端**的载荷——形态即协议，加字段等于改协议 */
@@ -296,6 +328,7 @@ export function registerGithubOauth<TEnv>(
     if (!gh) return c.json({ error: "not_configured" }, 404);
 
     const ua = browserMeta(c);
+    const client = clientFromQuery(c);
     const redirect = c.req.query("redirect") ?? "";
     if (!redirect || !redirectAllowed(redirect, gh)) {
       track(c, {
@@ -303,6 +336,7 @@ export function registerGithubOauth<TEnv>(
         outcome: "invalid_redirect",
         provider: "github",
         ...(Object.keys(ua).length ? { meta: ua } : {}),
+        client,
       });
       return c.json({ error: "invalid_redirect" }, 400);
     }
@@ -310,7 +344,7 @@ export function registerGithubOauth<TEnv>(
     const probe = clientProbe(c);
     const state = randomToken();
     const flowId = crypto.randomUUID();
-    const record: StateRecord = { redirect, flowId, ...probe };
+    const record: StateRecord = { redirect, flowId, ...probe, ...clientToState(client) };
     await cfg(c).kv.put(`oauth:state:${state}`, JSON.stringify(record), {
       expirationTtl: STATE_TTL_SECONDS,
     });
@@ -322,6 +356,7 @@ export function registerGithubOauth<TEnv>(
       provider: "github",
       flowId,
       ...(Object.keys(startMeta).length ? { meta: startMeta } : {}),
+      client,
     });
     return c.redirect(buildAuthorizeUrl(gh, callbackUrlFor(c, gh), state), 302);
   });
@@ -354,6 +389,7 @@ export function registerGithubOauth<TEnv>(
       mode: "link",
       userId: c.get("userId"),
       flowId,
+      ...clientToState(clientOf(c)),
     };
     await cfg(c).kv.put(`oauth:state:${state}`, JSON.stringify(record), {
       expirationTtl: STATE_TTL_SECONDS,
@@ -391,17 +427,20 @@ export function registerGithubOauth<TEnv>(
         outcome: "invalid_state",
         provider: "github",
         ...(Object.keys(ua).length ? { meta: ua } : {}),
+        client: CLIENT_ID_ABSENT, // 没有 state 就没有来源，也不读浏览器的头
       });
       return c.json({ error: "invalid_state" }, 400);
     }
     await cfg(c).kv.delete(stateKey); // 单次使用，验证即焚
-    const { redirect, mode, userId, flowId, browserTier, browserPkg, clientFlowId } =
-      JSON.parse(rawState) as StateRecord;
+    const stateRecord = JSON.parse(rawState) as StateRecord;
+    const { redirect, mode, userId, flowId, browserTier, browserPkg, clientFlowId } = stateRecord;
     const probe: ClientProbe = {
       ...(browserTier ? { browserTier } : {}),
       ...(browserPkg ? { browserPkg } : {}),
       ...(clientFlowId ? { clientFlowId } : {}),
     };
+    // callback 是浏览器请求，来源只能是 state；全空也显式传，不让 tracker 去读浏览器的头
+    const client = clientFromState(stateRecord);
     const trackCallback = (outcome: string, meta?: Record<string, unknown>) =>
       track(c, {
         event: "oauth_callback",
@@ -410,6 +449,7 @@ export function registerGithubOauth<TEnv>(
         ...(flowId ? { flowId } : {}),
         ...(userId ? { userId } : {}),
         meta: { mode: mode ?? "login", ...ua, ...probe, ...meta },
+        client,
       });
 
     // GitHub 用 ?error= 回报用户拒绝授权，此时没有 code；state 已验过，回跳地址可信
@@ -434,7 +474,7 @@ export function registerGithubOauth<TEnv>(
       providerProfile: publicProfile(ghUser), // GitHub /user 公开档案白名单字段
       providerAccessToken: ghToken,
       verifiedEmails,
-      requestMeta: { ip, userAgent },
+      requestMeta: { ip, userAgent, ...clientRequestMeta(client) },
     };
 
     // ---- link 分支：认领身份，不建会话、不发 token ----
@@ -514,6 +554,7 @@ export function registerGithubOauth<TEnv>(
       ...(flowId ? { flowId } : {}),
       ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
       meta: { mode: "login", ...ua, ...probe },
+      client,
     });
     return c.redirect(withParam(redirect, "otc", otc), 302);
   });

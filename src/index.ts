@@ -35,6 +35,7 @@ export type {
   CreateLoginOptions,
   VerifiedIdentity,
   VerifiedResult,
+  RequestMeta,
   OnVerified,
   LinkedIdentity,
   LinkResult,

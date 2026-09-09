@@ -29,7 +29,7 @@ import {
 import { signAccessToken, ACCESS_TTL_SECONDS } from "./token.js";
 import { createAuthMiddleware, type AuthVariables } from "./middleware.js";
 import { logEvent } from "./log.js";
-import { createTracker, type StatEvent } from "./stats.js";
+import { createTracker, clientOf, clientRequestMeta, type StatEvent } from "./stats.js";
 import { trimmedField } from "./body.js";
 import { matchDemoAccount } from "./demo_account.js";
 import { registerGithubOauth } from "./plugins/github.js";
@@ -157,7 +157,7 @@ export function createAuthApp<TEnv>(
       verified = await cfg(c).onVerified({
         email,
         provider: "email",
-        requestMeta: { ip, userAgent },
+        requestMeta: { ip, userAgent, ...clientRequestMeta(clientOf(c)) },
       });
     } catch {
       t({ event: "code_verify", outcome: "internal" });

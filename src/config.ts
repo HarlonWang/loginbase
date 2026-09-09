@@ -26,7 +26,18 @@ export interface VerifiedIdentity {
    * 挂了多个验证邮箱、其中之一才是 App 账号邮箱的用户，只比对 `email` 会被误判为新人。
    */
   verifiedEmails?: string[];
-  requestMeta: { ip?: string; userAgent?: string };
+  requestMeta: RequestMeta;
+}
+
+/**
+ * 请求侧元数据。`clientVersion` / `clientPlatform` 是客户端结构化上报的标识
+ * （docs/protocol.md「客户端标识」节，1.9.0 起），不是从 userAgent 解析的；不带即缺席。
+ */
+export interface RequestMeta {
+  ip?: string;
+  userAgent?: string;
+  clientVersion?: string;
+  clientPlatform?: string;
 }
 
 export interface VerifiedResult {
@@ -57,7 +68,7 @@ export interface LinkedIdentity {
   verifiedEmails?: string[];
   providerProfile?: unknown;
   providerAccessToken?: string;
-  requestMeta: { ip?: string; userAgent?: string };
+  requestMeta: RequestMeta;
 }
 
 /**
