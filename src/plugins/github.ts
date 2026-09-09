@@ -78,11 +78,6 @@ function clientFromQuery(c: { req: { query(name: string): string | undefined } }
   };
 }
 
-/** 有任一值才作为事件的显式来源；全空时让 tracker 按请求头兜底 */
-function clientOverride(client: ClientId): { client: ClientId } | Record<string, never> {
-  return client.version || client.platform ? { client } : {};
-}
-
 /** state 里以平铺字段存（与 probe 同形），读回时拼回 ClientId */
 function clientFromState(rec: { clientVersion?: string; clientPlatform?: string }): ClientId {
   return { version: rec.clientVersion ?? null, platform: rec.clientPlatform ?? null };
@@ -340,7 +335,7 @@ export function registerGithubOauth<TEnv>(
         outcome: "invalid_redirect",
         provider: "github",
         ...(Object.keys(ua).length ? { meta: ua } : {}),
-        ...clientOverride(client),
+        client,
       });
       return c.json({ error: "invalid_redirect" }, 400);
     }
@@ -360,7 +355,7 @@ export function registerGithubOauth<TEnv>(
       provider: "github",
       flowId,
       ...(Object.keys(startMeta).length ? { meta: startMeta } : {}),
-      ...clientOverride(client),
+      client,
     });
     return c.redirect(buildAuthorizeUrl(gh, callbackUrlFor(c, gh), state), 302);
   });
@@ -442,7 +437,7 @@ export function registerGithubOauth<TEnv>(
       ...(browserPkg ? { browserPkg } : {}),
       ...(clientFlowId ? { clientFlowId } : {}),
     };
-    // callback 是浏览器请求，App 的标识头到不了这里，从 state 取
+    // callback 是浏览器请求，来源只能是 state；全空也显式传，不让 tracker 去读浏览器的头
     const client = clientFromState(stateRecord);
     const trackCallback = (outcome: string, meta?: Record<string, unknown>) =>
       track(c, {
@@ -452,7 +447,7 @@ export function registerGithubOauth<TEnv>(
         ...(flowId ? { flowId } : {}),
         ...(userId ? { userId } : {}),
         meta: { mode: mode ?? "login", ...ua, ...probe, ...meta },
-        ...clientOverride(client),
+        client,
       });
 
     // GitHub 用 ?error= 回报用户拒绝授权，此时没有 code；state 已验过，回跳地址可信
@@ -557,7 +552,7 @@ export function registerGithubOauth<TEnv>(
       ...(flowId ? { flowId } : {}),
       ...(verified.isNewUser !== undefined ? { isNewUser: verified.isNewUser } : {}),
       meta: { mode: "login", ...ua, ...probe },
-      ...clientOverride(client),
+      client,
     });
     return c.redirect(withParam(redirect, "otc", otc), 302);
   });

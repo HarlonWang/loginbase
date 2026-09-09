@@ -775,6 +775,28 @@ describe("客户端标识（1.9.0）：只收结构化头 / 参数，落两列�
     expect(Object.keys(body).sort()).toEqual(["accessToken", "isNewUser", "refreshToken"]);
   });
 
+  it("start / callback 只认参数与 state，请求头上的 X-Client-* 不算", async () => {
+    const { app } = makeLogin();
+    const start = await app.request(
+      "/auth/oauth/github/start?redirect=testapp%3A%2F%2Fauth",
+      { method: "GET", headers: { "X-Client-Version": "9.9.9", "X-Client-Platform": "web" } },
+      env
+    );
+    const state = new URL(start.headers.get("Location")!).searchParams.get("state")!;
+    const cb = await app.request(
+      `/auth/oauth/github/callback?code=gh-code&state=${state}`,
+      { method: "GET", headers: { "X-Client-Version": "9.9.9", "X-Client-Platform": "web" } },
+      env
+    );
+    expect(cb.status).toBe(302);
+    await flushStats();
+
+    for (const r of (await rows()).filter((r) => r.event.startsWith("oauth_"))) {
+      expect(r.client_version, r.event).toBeNull();
+      expect(r.client_platform, r.event).toBeNull();
+    }
+  });
+
   it("表未加两列（未跑 0003）时回退旧 INSERT，事件不丢，告警一次", async () => {
     const events: Record<string, unknown>[] = [];
     const { app } = makeLogin({ onEvent: (e) => events.push(e) });
