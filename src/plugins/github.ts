@@ -13,6 +13,7 @@ import {
   clientVersionOf,
   clientPlatformOf,
   clientRequestMeta,
+  CLIENT_ID_ABSENT,
   type ClientId,
 } from "../stats.js";
 import { signAccessToken, ACCESS_TTL_SECONDS } from "../token.js";
@@ -426,6 +427,7 @@ export function registerGithubOauth<TEnv>(
         outcome: "invalid_state",
         provider: "github",
         ...(Object.keys(ua).length ? { meta: ua } : {}),
+        client: CLIENT_ID_ABSENT, // 没有 state 就没有来源，也不读浏览器的头
       });
       return c.json({ error: "invalid_state" }, 400);
     }

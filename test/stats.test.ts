@@ -789,6 +789,12 @@ describe("客户端标识（1.9.0）：只收结构化头 / 参数，落两列�
       env
     );
     expect(cb.status).toBe(302);
+    const bad = await app.request(
+      "/auth/oauth/github/callback?code=gh-code&state=nope",
+      { method: "GET", headers: { "X-Client-Version": "9.9.9", "X-Client-Platform": "web" } },
+      env
+    );
+    expect(bad.status).toBe(400);
     await flushStats();
 
     for (const r of (await rows()).filter((r) => r.event.startsWith("oauth_"))) {
