@@ -48,7 +48,7 @@ migrations_dir = "node_modules/loginbase/migrations"
 npx wrangler d1 migrations apply my-app --remote
 ```
 
-如果共用一个已有自己迁移的 D1，改为把 `node_modules/loginbase/migrations/` 下的两个文件复制进你自己的迁移目录。**漏掉 `0002_auth_events.sql` 是静默的**——登录照常工作，只是统计永远不落库。
+如果共用一个已有自己迁移的 D1，改为把 `node_modules/loginbase/migrations/` 下的文件复制进你自己的迁移目录。**漏掉 `0002_auth_events.sql` 是静默的**——登录照常工作，只是统计永远不落库。漏掉 `0003_auth_events_client.sql`（1.9.0）同样静默——事件照常落库，只是没有客户端版本 / 平台两列，并告警一次 `stats_schema_outdated`。
 
 **3. 建实例并挂载。** loginbase 只要求你一件事：把一个已验证的身份换成 userId。用户表的一切仍然归你。
 

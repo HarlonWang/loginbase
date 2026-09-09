@@ -39,6 +39,8 @@ interface EventRow {
   region: string | null;
   source: string;
   meta: string | null;
+  client_version: string | null;
+  client_platform: string | null;
 }
 
 async function rows(): Promise<EventRow[]> {
@@ -623,5 +625,180 @@ describe("refresh", () => {
     expect(rescued.ip).toBe("9.9.9.9");
     const rescuedRow = refreshRows[1];
     expect(String(rescuedRow.meta)).not.toContain("9.9.9.9"); // ip 不入库
+  });
+});
+
+describe("客户端标识（1.9.0）：只收结构化头 / 参数，落两列，永不解析 UA", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("https://github.com/login/oauth/access_token")) {
+        return new Response(JSON.stringify({ access_token: "gh-token" }), { status: 200 });
+      }
+      if (url.startsWith("https://api.github.com/user/emails")) {
+        return new Response(
+          JSON.stringify([{ email: "octo@example.com", primary: true, verified: true }]),
+          { status: 200 }
+        );
+      }
+      if (url.startsWith("https://api.github.com/applications/") && url.endsWith("/token")) {
+        return new Response(JSON.stringify({ user: { id: 42, login: "octocat" } }), {
+          status: 200,
+        });
+      }
+      if (url === "https://api.github.com/user/42") {
+        return new Response(JSON.stringify({ id: 42, login: "octocat" }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+  });
+
+  afterEach(() => fetchSpy.mockRestore());
+
+  const APP_HEADERS = {
+    "Content-Type": "application/json",
+    "User-Agent": "TestApp/9.9.9 (Android 14; Pixel) loginbase-kt/0.4.0",
+    "X-Client-Version": "1.5.0",
+    "X-Client-Platform": "android",
+  };
+
+  it("App 直连请求的 X-Client-* 头落列，并透传到 onVerified 的 requestMeta", async () => {
+    let meta: Record<string, unknown> | undefined;
+    const { app } = makeLogin({
+      onVerified: (identity) => {
+        meta = identity.requestMeta as Record<string, unknown>;
+        return { userId: "u-client" };
+      },
+    });
+    await storeCode(env.EMAIL_CODES, "c@example.com", "123456");
+    const res = await app.request(
+      "/auth/code/verify",
+      {
+        method: "POST",
+        headers: APP_HEADERS,
+        body: JSON.stringify({ email: "c@example.com", code: "123456" }),
+      },
+      env
+    );
+    expect(res.status).toBe(200);
+    await flushStats();
+
+    for (const r of await rows()) {
+      expect(r.client_version, r.event).toBe("1.5.0");
+      expect(r.client_platform, r.event).toBe("android");
+    }
+    expect(meta?.clientVersion).toBe("1.5.0");
+    expect(meta?.clientPlatform).toBe("android");
+    expect(meta?.userAgent).toContain("TestApp/9.9.9"); // UA 照存，但版本不从它解析
+  });
+
+  it("非法值静默丢弃、不带即 NULL；UA 里有版本也不算", async () => {
+    const { app } = makeLogin();
+    const res = await verify(app, "n@example.com");
+    expect(res.status).toBe(200);
+    await storeCode(env.EMAIL_CODES, "bad@example.com", "123456");
+    const bad = await app.request(
+      "/auth/code/verify",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "TestApp/1.5.0 (Android 14)",
+          "X-Client-Version": "1.5.0 beta", // 含空格，不匹配
+          "X-Client-Platform": "Android", // 只认小写
+        },
+        body: JSON.stringify({ email: "bad@example.com", code: "123456" }),
+      },
+      env
+    );
+    expect(bad.status).toBe(200);
+    await flushStats();
+
+    for (const r of await rows()) {
+      expect(r.client_version, r.event).toBeNull();
+      expect(r.client_platform, r.event).toBeNull();
+    }
+  });
+
+  it("OAuth：start 参数随 state 到 callback（含 invalid_redirect），exchange 与 login 取 App 的头", async () => {
+    const { app } = makeLogin();
+    const invalid = await app.request(
+      "/auth/oauth/github/start?client_version=1.5.0&client_platform=android",
+      { method: "GET" },
+      env
+    );
+    expect(invalid.status).toBe(400);
+
+    const start = await app.request(
+      "/auth/oauth/github/start?redirect=testapp%3A%2F%2Fauth" +
+        "&client_version=1.5.0&client_platform=android&browser_tier=auth_tab",
+      { method: "GET" },
+      env
+    );
+    const state = new URL(start.headers.get("Location")!).searchParams.get("state")!;
+    const cb = await app.request(
+      `/auth/oauth/github/callback?code=gh-code&state=${state}`,
+      { method: "GET" },
+      env
+    );
+    const otc = new URL(cb.headers.get("Location")!).searchParams.get("otc")!;
+    // 兑换时 App 报了另一个版本：exchange / login 以请求头为准，证明两条来源各走各的
+    const ex = await app.request(
+      "/auth/oauth/exchange",
+      {
+        method: "POST",
+        headers: { ...APP_HEADERS, "X-Client-Version": "1.5.1", "X-Client-Platform": "ios" },
+        body: JSON.stringify({ otc }),
+      },
+      env
+    );
+    expect(ex.status).toBe(200);
+    await flushStats();
+
+    const all = await rows();
+    const pick = (event: string, outcome: string) =>
+      all.find((r) => r.event === event && r.outcome === outcome)!;
+    expect(pick("oauth_start", "invalid_redirect").client_version).toBe("1.5.0");
+    expect(pick("oauth_start", "ok").client_platform).toBe("android");
+    expect(pick("oauth_callback", "issued").client_version).toBe("1.5.0");
+    expect(pick("oauth_callback", "issued").client_platform).toBe("android");
+    expect(pick("oauth_exchange", "ok").client_version).toBe("1.5.1");
+    expect(all.find((r) => r.event === "login")!.client_platform).toBe("ios");
+    // 标识落列不落 meta；probe 照旧在 meta
+    const cbMeta = JSON.parse(String(pick("oauth_callback", "issued").meta)) as Record<string, unknown>;
+    expect(cbMeta.browserTier).toBe("auth_tab");
+    expect(cbMeta.clientVersion).toBeUndefined();
+    const body = (await ex.json()) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["accessToken", "isNewUser", "refreshToken"]);
+  });
+
+  it("表未加两列（未跑 0003）时回退旧 INSERT，事件不丢，告警一次", async () => {
+    const events: Record<string, unknown>[] = [];
+    const { app } = makeLogin({ onEvent: (e) => events.push(e) });
+    await env.DB.prepare("DROP TABLE IF EXISTS auth_events").run();
+    await env.DB.prepare(
+      "CREATE TABLE auth_events (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, event TEXT NOT NULL, outcome TEXT, provider TEXT, user_id TEXT, flow_id TEXT, is_new_user INTEGER, country TEXT, asn INTEGER, colo TEXT, timezone TEXT, city TEXT, region TEXT, source TEXT NOT NULL DEFAULT 'server', meta TEXT)"
+    ).run();
+
+    for (const email of ["l1@example.com", "l2@example.com"]) {
+      await storeCode(env.EMAIL_CODES, email, "123456");
+      const res = await app.request(
+        "/auth/code/verify",
+        { method: "POST", headers: APP_HEADERS, body: JSON.stringify({ email, code: "123456" }) },
+        env
+      );
+      expect(res.status).toBe(200);
+    }
+    await flushStats();
+
+    const { results } = await env.DB.prepare("SELECT event FROM auth_events").all<{ event: string }>();
+    expect(results.filter((r) => r.event === "login")).toHaveLength(2);
+    expect(events.filter((e) => e.event === "stats_schema_outdated")).toHaveLength(1);
+    expect(events.filter((e) => e.event === "stats_unavailable")).toHaveLength(0);
+    // onEvent 钩子照样拿到标识，不依赖表形态
+    expect(events.find((e) => e.event === "login")?.clientVersion).toBe("1.5.0");
   });
 });

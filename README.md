@@ -48,7 +48,7 @@ migrations_dir = "node_modules/loginbase/migrations"
 npx wrangler d1 migrations apply my-app --remote
 ```
 
-Sharing a D1 that already has migrations of its own? Copy the two files from `node_modules/loginbase/migrations/` into your own migrations directory instead. **Skipping `0002_auth_events.sql` is silent** — login keeps working, analytics just never land.
+Sharing a D1 that already has migrations of its own? Copy the files from `node_modules/loginbase/migrations/` into your own migrations directory instead. **Skipping `0002_auth_events.sql` is silent** — login keeps working, analytics just never land. Skipping `0003_auth_events_client.sql` (1.9.0) is silent too — events still land, only without the client version/platform columns, and you get one `stats_schema_outdated` warning.
 
 **3. Create and mount.** The only thing loginbase asks of you is how to turn a verified identity into a user id. Everything about your user table stays yours.
 
