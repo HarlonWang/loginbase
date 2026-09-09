@@ -226,7 +226,7 @@ export function createTracker<TEnv>(getConfig: (env: TEnv) => LoginConfig) {
             legacySchemaConfigs.add(cfg);
             onEvent({
               event: "stats_schema_outdated",
-              hint: "auth_events 缺 client_version / client_platform 列，请执行 migration 0003；事件已按旧表形态落库",
+              hint: "auth_events 缺 client_version / client_platform 列，请执行 migration 0003；事件已按旧表形态落库，跑完迁移后重新部署一次即恢复两列（本 isolate 不再重试）",
               message: String(err),
             });
           }
