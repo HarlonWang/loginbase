@@ -56,7 +56,7 @@ Sharing a D1 that already has migrations of its own? Copy the files from `node_m
 stats: { db: env.EVENTS_DB },   // omit `stats` entirely to record nothing
 ```
 
-Run eventbase's migrations on that database. Skipping them is silent: login keeps working, statistics just never land, and you get one `stats_unavailable` warning.
+Run eventbase's migrations on that database. Skipping them never blocks login — statistics simply never land, and you get one `stats_unavailable` warning to tell you so.
 
 **3. Create and mount.** The only thing loginbase asks of you is how to turn a verified identity into a user id. Everything about your user table stays yours.
 

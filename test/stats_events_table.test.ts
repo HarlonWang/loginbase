@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:workers";
 import { flushEvents } from "@whlong/eventbase";
 import { createLogin, storeCode } from "../src/index";
+import { toServerEvent } from "../src/stats";
 import type { LoginConfig } from "../src/index";
 import { initDb, initEventsDb, wipeKv } from "./helpers";
 
@@ -83,6 +84,7 @@ describe("events 表里的存储形态", () => {
     expect(props.client_platform).toBe("android");
   });
 
+
   it("落 city / region——阶段 1 给 eventbase 加这两列就是为了它", async () => {
     const { app } = makeLogin();
     await storeCode(env.EMAIL_CODES, "地理@example.com", "123456");
@@ -101,4 +103,29 @@ describe("events 表里的存储形态", () => {
     expect(login.region).toBe("Santiago Metropolitan");
   });
 
+});
+
+// 纯函数单测：meta 的键名不受限，撞上标准字段时必须以真实登录结果为准。
+// 走 HTTP 测不到——库内部产生的 meta 从不含这些键，只有未来的调用点才会撞上。
+describe("toServerEvent：meta 不得覆盖标准字段", () => {
+  const client = { version: "1.6.0", platform: "android" };
+
+  it("meta 里的同名键让位给真实值", () => {
+    const ev = toServerEvent(
+      {
+        event: "code_verify",
+        outcome: "ok",
+        provider: "email",
+        isNewUser: true,
+        meta: { outcome: "伪造", provider: "伪造", client_version: "伪造", locale: "zh" },
+      },
+      client
+    );
+    const props = ev.props!;
+    expect(props.outcome).toBe("ok");
+    expect(props.provider).toBe("email");
+    expect(props.is_new_user).toBe(true);
+    expect(props.client_version).toBe("1.6.0");
+    expect(props.locale).toBe("zh");
+  });
 });

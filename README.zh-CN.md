@@ -56,7 +56,7 @@ npx wrangler d1 migrations apply my-app --remote
 stats: { db: env.EVENTS_DB },   // 整个不配 stats 即完全不记统计
 ```
 
-要对那个库执行 eventbase 的迁移。漏掉是静默的：登录照常工作，只是统计永远不落库，并告警一次 `stats_unavailable`。
+要对那个库执行 eventbase 的迁移。漏掉不会挡住登录——只是统计永远不落库，并告警一次 `stats_unavailable` 告诉你这件事。
 
 **3. 建实例并挂载。** loginbase 只要求你一件事：把一个已验证的身份换成 userId。用户表的一切仍然归你。
 

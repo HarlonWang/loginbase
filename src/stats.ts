@@ -5,6 +5,7 @@
 // 第一原则：**统计绝不能成为登录的故障源**。消费方未必已对埋点库执行迁移，
 // 所以写入失败是预期内的常态：一律吞掉、异步写、首次失败告警一次。
 import { createTracker as createEventsTracker } from "@whlong/eventbase";
+import type { ServerEvent } from "@whlong/eventbase";
 import type { LoginConfig } from "./config.js";
 import { logEvent } from "./log.js";
 
@@ -16,7 +17,7 @@ export interface StatEvent {
   /** 串联 OAuth 三段的标识；绝不可用 state / otc 充当（单次凭证不进长期表） */
   flowId?: string;
   isNewUser?: boolean;
-  /** 落 meta 列（JSON），并摊平进 onEvent */
+  /** 并入事件的 props（键原样保留），并摊平进 onEvent */
   meta?: Record<string, unknown>;
   /** 只摊平进 onEvent，**不落表**（ip 等 v1 判定不入库的字段走这里） */
   hookOnly?: Record<string, unknown>;
@@ -87,25 +88,26 @@ function defer(c: TrackContext, p: Promise<unknown>): void {
  * 一律进 props：列名键沿用 snake_case，`meta` 的键原样并入（既有契约，改名会断掉
  * 已写好的查询与历史数据的可比性）。geo 由 eventbase 自己从 request 取，不在此传。
  */
-function toServerEvent(e: StatEvent, client: ClientId) {
+export function toServerEvent(e: StatEvent, client: ClientId): ServerEvent {
   return {
     name: e.event,
     ...(e.userId !== undefined ? { userId: e.userId } : {}),
     ...(e.flowId !== undefined ? { flowId: e.flowId } : {}),
     props: {
+      // meta 在前：键名不受限，落在标准字段之后会静默覆盖真实的 outcome / provider
+      ...e.meta,
       ...(e.outcome !== undefined ? { outcome: e.outcome } : {}),
       ...(e.provider !== undefined ? { provider: e.provider } : {}),
       ...(e.isNewUser !== undefined ? { is_new_user: e.isNewUser } : {}),
       ...(client.version ? { client_version: client.version } : {}),
       ...(client.platform ? { client_platform: client.platform } : {}),
-      ...e.meta,
     },
   };
 }
 
 /**
  * 事件出口：先照原样喂 onEvent（消费方钩子，形态与 1.3.0 保持一致），
- * 再异步写自己的表。两条路径并行——onEvent 是给消费方的，不被库劫持去写库表。
+ * 再异步写埋点库。两条路径并行——onEvent 是给消费方的，不被库劫持去写库表。
  */
 export function createTracker<TEnv>(getConfig: (env: TEnv) => LoginConfig) {
   return (c: TrackContext, e: StatEvent): void => {
