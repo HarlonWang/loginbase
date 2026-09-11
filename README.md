@@ -48,7 +48,15 @@ migrations_dir = "node_modules/loginbase/migrations"
 npx wrangler d1 migrations apply my-app --remote
 ```
 
-Sharing a D1 that already has migrations of its own? Copy the files from `node_modules/loginbase/migrations/` into your own migrations directory instead. **Skipping `0002_auth_events.sql` is silent** — login keeps working, analytics just never land. Skipping `0003_auth_events_client.sql` (1.9.0) is silent too — events still land, only without the client version/platform columns, and you get one `stats_schema_outdated` warning. `0003` alters the table `0002` creates, so if you skip `0002` you must skip `0003` as well.
+Sharing a D1 that already has migrations of its own? Copy the files from `node_modules/loginbase/migrations/` into your own migrations directory instead. Only `0001_sessions.sql` is required. `0002_auth_events.sql` and `0003_auth_events_client.sql` built the `auth_events` table that 1.x wrote to — **2.0.0 no longer writes it**, so new integrations can skip both. They remain in the package because databases that already applied them would otherwise show a ledger/file mismatch.
+
+**2b. Point statistics at eventbase.** Login events go to [eventbase](https://github.com/HarlonWang/eventbase)'s `events` table, sharing one table with your client-side analytics — which is the only way the funnel's server half and client half can be joined.
+
+```ts
+stats: { db: env.EVENTS_DB },   // omit `stats` entirely to record nothing
+```
+
+Run eventbase's migrations on that database. Skipping them never blocks login — statistics simply never land, and you get one `stats_unavailable` warning to tell you so.
 
 **3. Create and mount.** The only thing loginbase asks of you is how to turn a verified identity into a user id. Everything about your user table stays yours.
 

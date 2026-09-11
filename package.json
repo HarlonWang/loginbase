@@ -1,6 +1,6 @@
 {
   "name": "loginbase",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "description": "Shared login foundation for Cloudflare Workers: email OTP + social OAuth + session management, as a Hono sub-app factory.",
   "type": "module",
   "license": "MIT",
@@ -36,6 +36,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
+    "@whlong/eventbase": "^0.4.0",
     "hono": "^4.12.8"
   },
   "dependencies": {
@@ -44,6 +45,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "~0.13.1",
     "@cloudflare/workers-types": "~4.20260317.1",
+    "@whlong/eventbase": "^0.4.0",
     "hono": "^4.12.8",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0",

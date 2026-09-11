@@ -1,6 +1,13 @@
 // 测试夹具：onVerified 复刻 Tono 语义（users upsert + 90 天试用 + user 载荷），
 // 使平移自 Tono 的 HTTP 测试在钩子化后原样通过——夹具即钩子化等价性的对照组。
 import { env } from "cloudflare:workers";
+import ebEvents from "../node_modules/@whlong/eventbase/migrations/0001_events.sql?raw";
+import ebEventId from "../node_modules/@whlong/eventbase/migrations/0004_event_id.sql?raw";
+import ebDeviceId from "../node_modules/@whlong/eventbase/migrations/0005_device_id.sql?raw";
+import ebCity from "../node_modules/@whlong/eventbase/migrations/0006_geo_city.sql?raw";
+import ebRegion from "../node_modules/@whlong/eventbase/migrations/0007_geo_region.sql?raw";
+
+const EVENTBASE_SCHEMA = [ebEvents, ebEventId, ebDeviceId, ebCity, ebRegion];
 import { createLogin, createSession, signAccessToken } from "../src/index";
 import type { VerifiedResult } from "../src/index";
 
@@ -70,10 +77,20 @@ export async function initDb() {
   const schema = `
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, pro_expires_at INTEGER, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, family_id TEXT NOT NULL, expires_at INTEGER, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL, user_agent TEXT, ip TEXT, revoked_at INTEGER, replaced_by_id TEXT, rescued_at INTEGER);
-    CREATE TABLE IF NOT EXISTS auth_events (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, event TEXT NOT NULL, outcome TEXT, provider TEXT, user_id TEXT, flow_id TEXT, is_new_user INTEGER, country TEXT, asn INTEGER, colo TEXT, timezone TEXT, city TEXT, region TEXT, source TEXT NOT NULL DEFAULT 'server', meta TEXT, client_version TEXT, client_platform TEXT);
   `;
   for (const stmt of schema.split(";").filter((s) => s.trim())) {
     await env.DB.prepare(stmt).run();
+  }
+}
+
+/** eventbase 的 events 表（stats.db 路径用）。DDL 直接取自装好的包，与生产同源。 */
+export async function initEventsDb() {
+  for (const stmt of EVENTBASE_SCHEMA.join(";").split(";").filter((s) => s.trim())) {
+    await env.DB.prepare(stmt)
+      .run()
+      .catch((e: Error) => {
+        if (!/duplicate column name/.test(e.message)) throw e;
+      });
   }
 }
 

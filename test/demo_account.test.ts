@@ -2,10 +2,11 @@
 // 码为固定值、不真实发信；其余（限流、存码、verify、建会话）必须与常规
 // 账号走同一条路。这里既验证审核员流程可用，也验证「不存在鉴权旁路」。
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { createLogin, flushStats, MAX_ATTEMPTS } from "../src/index";
+import { flushEvents } from "@whlong/eventbase";
+import { createLogin, MAX_ATTEMPTS } from "../src/index";
 import { matchDemoAccount } from "../src/demo_account";
 import type { LoginConfig } from "../src/config";
-import { env, app, initDb, wipeKv, tonoLikeOnVerified } from "./helpers";
+import { env, app, initDb, initEventsDb, wipeKv, tonoLikeOnVerified } from "./helpers";
 
 const DEMO_EMAIL = "demo.reviewer@example.com";
 const DEMO_CODE = "246810";
@@ -23,6 +24,7 @@ const demoLogin = createLogin<Cloudflare.Env>((e) => ({
   },
   demoAccount: { email: `  ${DEMO_EMAIL.toUpperCase()}  `, code: DEMO_CODE },
   onVerified: ({ email }) => tonoLikeOnVerified(email),
+  stats: { db: e.DB },
 }));
 const demoApp = demoLogin.app;
 
@@ -45,12 +47,16 @@ function post(
 
 async function readEvents() {
   const { results } = await env.DB.prepare(
-    "SELECT event, outcome, meta FROM auth_events ORDER BY id"
-  ).all<{ event: string; outcome: string | null; meta: string | null }>();
-  return results.map((r) => ({
-    ...r,
-    meta: r.meta ? (JSON.parse(r.meta) as Record<string, unknown>) : null,
-  }));
+    "SELECT name, props FROM events ORDER BY id"
+  ).all<{ name: string; props: string | null }>();
+  return results.map((r) => {
+    const { outcome, ...meta } = (r.props ? JSON.parse(r.props) : {}) as Record<string, unknown>;
+    return {
+      event: r.name,
+      outcome: (outcome as string) ?? null,
+      meta: Object.keys(meta).length ? meta : null,
+    };
+  });
 }
 
 // 纯函数单测：码合法性也是「是否命中演示账号」判定的一部分（契约见 config.ts），
@@ -96,8 +102,9 @@ describe("演示账号", () => {
 
   beforeEach(async () => {
     await initDb();
+    await initEventsDb();
     await wipeKv();
-    await env.DB.prepare("DELETE FROM auth_events").run();
+    await env.DB.prepare("DELETE FROM events").run();
     fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response("{}", { status: 200 }));
@@ -182,7 +189,7 @@ describe("演示账号", () => {
     const res = await post(demoApp, "/auth/code/send", { email: DEMO_EMAIL });
     expect(res.status).toBe(429);
 
-    await flushStats();
+    await flushEvents();
     const limited = (await readEvents()).find((e) => e.event === "rate_limited");
     expect(limited?.meta).toMatchObject({ endpoint: "code_send", demo: true });
   });
@@ -264,7 +271,7 @@ describe("演示账号", () => {
     await post(demoApp, "/auth/code/send", { email: DEMO_EMAIL });
     await post(demoApp, "/auth/code/verify", { email: DEMO_EMAIL, code: DEMO_CODE });
     await post(demoApp, "/auth/code/send", { email: "real@example.com" }, "8.8.8.8");
-    await flushStats();
+    await flushEvents();
 
     const events = await readEvents();
     const demoEvents = events.filter((e) => e.meta?.demo === true);

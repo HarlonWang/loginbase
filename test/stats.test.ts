@@ -2,9 +2,10 @@
 // 第一原则的守门测试在最上面：**表不存在时登录必须照常成功**。
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { env } from "cloudflare:workers";
-import { createLogin, storeCode, flushStats } from "../src/index";
+import { flushEvents } from "@whlong/eventbase";
+import { createLogin, storeCode } from "../src/index";
 import type { LoginConfig } from "../src/index";
-import { initDb, wipeKv, createTestUser } from "./helpers";
+import { initDb, initEventsDb, wipeKv, createTestUser } from "./helpers";
 
 function makeLogin(overrides: Partial<LoginConfig> = {}) {
   return createLogin<Cloudflare.Env>((e) => ({
@@ -20,6 +21,7 @@ function makeLogin(overrides: Partial<LoginConfig> = {}) {
       },
     },
     onVerified: () => ({ userId: "u-stats", isNewUser: true }),
+    stats: { db: e.DB },
     ...overrides,
   }));
 }
@@ -43,15 +45,38 @@ interface EventRow {
   client_platform: string | null;
 }
 
+// 事件落 eventbase 的 events 表，1.x 的独立列已并进 props。这里摊平回旧字段名，
+// 让下面的用例继续断言业务语义而不是存储形态；存储形态另有专门用例守着。
 async function rows(): Promise<EventRow[]> {
   const { results } = await env.DB.prepare(
-    "SELECT * FROM auth_events ORDER BY id"
-  ).all<EventRow>();
-  return results;
+    "SELECT * FROM events ORDER BY id"
+  ).all<Record<string, unknown>>();
+  return results.map((r) => {
+    const props = (r.props ? JSON.parse(String(r.props)) : {}) as Record<string, unknown>;
+    const { outcome, provider, is_new_user, client_version, client_platform, ...meta } = props;
+    return {
+      event: String(r.name),
+      outcome: (outcome as string) ?? null,
+      provider: (provider as string) ?? null,
+      user_id: (r.user_id as string) ?? null,
+      flow_id: (r.flow_id as string) ?? null,
+      is_new_user: is_new_user === undefined ? null : is_new_user ? 1 : 0,
+      country: (r.country as string) ?? null,
+      asn: (r.asn as number) ?? null,
+      colo: (r.colo as string) ?? null,
+      timezone: (r.timezone as string) ?? null,
+      city: (r.city as string) ?? null,
+      region: (r.region as string) ?? null,
+      source: String(r.source),
+      meta: Object.keys(meta).length ? JSON.stringify(meta) : null,
+      client_version: (client_version as string) ?? null,
+      client_platform: (client_platform as string) ?? null,
+    };
+  });
 }
 
 async function wipeEvents() {
-  await env.DB.prepare("DELETE FROM auth_events").run();
+  await env.DB.prepare("DELETE FROM events").run();
 }
 
 async function verify(app: ReturnType<typeof makeLogin>["app"], email: string) {
@@ -69,38 +94,39 @@ async function verify(app: ReturnType<typeof makeLogin>["app"], email: string) {
 
 beforeEach(async () => {
   await initDb();
+  await initEventsDb();
   await wipeKv();
   await wipeEvents();
 });
 
 describe("fail-safe：统计绝不能成为登录的故障源", () => {
-  it("auth_events 不存在时登录照常成功，且只告警一次", async () => {
+  it("events 表不存在时登录照常成功，且只告警一次", async () => {
     const events: Record<string, unknown>[] = [];
     // 独立实例 = 独立 config 对象，告警的 once 记忆化不被其它用例污染
     const { app } = makeLogin({ onEvent: (e) => events.push(e) });
-    await env.DB.prepare("DROP TABLE IF EXISTS auth_events").run();
+    await env.DB.prepare("DROP TABLE IF EXISTS events").run();
 
     const res = await verify(app, "nodb@example.com");
     expect(res.status).toBe(200); // 登录不受影响
-    await flushStats();
+    await flushEvents();
 
     const warnings = events.filter((e) => e.event === "stats_unavailable");
     expect(warnings).toHaveLength(1);
-    expect(String(warnings[0].hint)).toContain("migration 0002");
+    expect(String(warnings[0].hint)).toContain("eventbase 的 migrations");
 
     // 第二次请求不再刷屏
     await verify(app, "nodb2@example.com");
-    await flushStats();
+    await flushEvents();
     expect(events.filter((e) => e.event === "stats_unavailable")).toHaveLength(1);
 
     await initDb(); // 复原，供后续用例
   });
 
   it("enabled: false 时一条都不写", async () => {
-    const { app } = makeLogin({ stats: { enabled: false } });
+    const { app } = makeLogin({ stats: { db: env.DB, enabled: false } });
     const res = await verify(app, "off@example.com");
     expect(res.status).toBe(200);
-    await flushStats();
+    await flushEvents();
     expect(await rows()).toHaveLength(0);
   });
 });
@@ -109,7 +135,7 @@ describe("邮箱验证码链路", () => {
   it("验码成功写 code_verify(ok) 与 login", async () => {
     const { app } = makeLogin();
     await verify(app, "ok@example.com");
-    await flushStats();
+    await flushEvents();
 
     const all = await rows();
     expect(all.map((r) => `${r.event}:${r.outcome ?? ""}`)).toEqual([
@@ -151,7 +177,7 @@ describe("邮箱验证码链路", () => {
     } as RequestInit);
 
     expect((await app.fetch(req, env)).status).toBe(200);
-    await flushStats();
+    await flushEvents();
 
     const login = (await rows()).find((r) => r.event === "login")!;
     expect({
@@ -192,7 +218,7 @@ describe("邮箱验证码链路", () => {
     // 连错 5 次即焚
     await storeCode(env.EMAIL_CODES, "burn@example.com", "123456");
     for (let i = 0; i < 5; i++) await post({ email: "burn@example.com", code: "000000" });
-    await flushStats();
+    await flushEvents();
 
     const outcomes = (await rows())
       .filter((r) => r.event === "code_verify")
@@ -210,7 +236,7 @@ describe("邮箱验证码链路", () => {
     });
     const res = await verify(app, "hookfail@example.com");
     expect(res.status).toBe(500);
-    await flushStats();
+    await flushEvents();
     const all = await rows();
     expect(all).toHaveLength(1);
     expect(all[0].outcome).toBe("internal");
@@ -231,7 +257,7 @@ describe("邮箱验证码链路", () => {
       },
       env
     );
-    await flushStats();
+    await flushEvents();
 
     expect((await rows()).map((r) => r.event)).toEqual(["code_sent"]);
     expect(events.find((e) => e.event === "code_sent")).toEqual({
@@ -256,7 +282,7 @@ describe("邮箱验证码链路", () => {
       env
     );
     expect(res.status).toBe(500);
-    await flushStats();
+    await flushEvents();
 
     const all = await rows();
     expect(all).toHaveLength(1);
@@ -285,7 +311,7 @@ describe("限流与主动登出", () => {
     await send("rl@example.com"); // 首次通过，写下 60s cooldown
     const blocked = await send("rl@example.com");
     expect(blocked.status).toBe(429);
-    await flushStats();
+    await flushEvents();
 
     const limited = (await rows()).filter((r) => r.event === "rate_limited");
     expect(limited).toHaveLength(1);
@@ -306,7 +332,7 @@ describe("限流与主动登出", () => {
     expect(
       (await app.request("/auth/sessions/all", { method: "DELETE", headers }, env)).status
     ).toBe(204);
-    await flushStats();
+    await flushEvents();
 
     const revoked = (await rows()).filter((r) => r.event === "session_revoked");
     expect(revoked.map((r) => r.outcome)).toEqual(["current", "all"]);
@@ -372,7 +398,7 @@ describe("OAuth 漏斗", () => {
       env
     );
     expect(ex.status).toBe(200);
-    await flushStats();
+    await flushEvents();
 
     const all = await rows();
     expect(all.map((r) => `${r.event}:${r.outcome ?? ""}`)).toEqual([
@@ -415,7 +441,7 @@ describe("OAuth 漏斗", () => {
       },
       env
     );
-    await flushStats();
+    await flushEvents();
 
     const all = await rows();
     const metaOf = (event: string) =>
@@ -452,7 +478,7 @@ describe("OAuth 漏斗", () => {
     );
     const body = (await ex.json()) as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual(["accessToken", "isNewUser", "refreshToken"]);
-    await flushStats();
+    await flushEvents();
 
     const all = await rows();
     for (const event of ["oauth_start", "oauth_callback", "oauth_exchange", "login"]) {
@@ -493,7 +519,7 @@ describe("OAuth 漏斗", () => {
       env
     );
     expect(ex.status).toBe(200);
-    await flushStats();
+    await flushEvents();
 
     const all = await rows();
     expect(all.map((r) => `${r.event}:${r.outcome ?? ""}`)).toEqual([
@@ -518,7 +544,7 @@ describe("OAuth 漏斗", () => {
       { method: "GET", headers: { "User-Agent": "x".repeat(1000) } },
       env
     );
-    await flushStats();
+    await flushEvents();
     const all = await rows();
     const meta = JSON.parse(String(all[0].meta)) as Record<string, string>;
     expect(meta.ua).toHaveLength(256);
@@ -559,7 +585,7 @@ describe("OAuth 漏斗", () => {
       env
     );
     expect(res.status).toBe(400);
-    await flushStats();
+    await flushEvents();
     const all = await rows();
     expect(all).toHaveLength(1);
     expect(all[0].outcome).toBe("invalid_state");
@@ -577,7 +603,7 @@ describe("OAuth 漏斗", () => {
       },
       env
     );
-    await flushStats();
+    await flushEvents();
     const all = await rows();
     expect(all).toHaveLength(1);
     expect(`${all[0].event}:${all[0].outcome}`).toBe("oauth_exchange:invalid_otc");
@@ -606,7 +632,7 @@ describe("refresh", () => {
     // 旧 token 再次提交 → 丢回执救活
     const again = await post(user.refreshToken);
     expect(again.status).toBe(200);
-    await flushStats();
+    await flushEvents();
 
     const refreshRows = (await rows()).filter((r) => r.event === "refresh");
     expect(refreshRows.map((r) => r.outcome)).toEqual(["ok", "rescued"]);
@@ -684,7 +710,7 @@ describe("客户端标识（1.9.0）：只收结构化头 / 参数，落两列�
       env
     );
     expect(res.status).toBe(200);
-    await flushStats();
+    await flushEvents();
 
     for (const r of await rows()) {
       expect(r.client_version, r.event).toBe("1.5.0");
@@ -715,7 +741,7 @@ describe("客户端标识（1.9.0）：只收结构化头 / 参数，落两列�
       env
     );
     expect(bad.status).toBe(200);
-    await flushStats();
+    await flushEvents();
 
     for (const r of await rows()) {
       expect(r.client_version, r.event).toBeNull();
@@ -756,7 +782,7 @@ describe("客户端标识（1.9.0）：只收结构化头 / 参数，落两列�
       env
     );
     expect(ex.status).toBe(200);
-    await flushStats();
+    await flushEvents();
 
     const all = await rows();
     const pick = (event: string, outcome: string) =>
@@ -795,7 +821,7 @@ describe("客户端标识（1.9.0）：只收结构化头 / 参数，落两列�
       env
     );
     expect(bad.status).toBe(400);
-    await flushStats();
+    await flushEvents();
 
     for (const r of (await rows()).filter((r) => r.event.startsWith("oauth_"))) {
       expect(r.client_version, r.event).toBeNull();
@@ -803,30 +829,4 @@ describe("客户端标识（1.9.0）：只收结构化头 / 参数，落两列�
     }
   });
 
-  it("表未加两列（未跑 0003）时回退旧 INSERT，事件不丢，告警一次", async () => {
-    const events: Record<string, unknown>[] = [];
-    const { app } = makeLogin({ onEvent: (e) => events.push(e) });
-    await env.DB.prepare("DROP TABLE IF EXISTS auth_events").run();
-    await env.DB.prepare(
-      "CREATE TABLE auth_events (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, event TEXT NOT NULL, outcome TEXT, provider TEXT, user_id TEXT, flow_id TEXT, is_new_user INTEGER, country TEXT, asn INTEGER, colo TEXT, timezone TEXT, city TEXT, region TEXT, source TEXT NOT NULL DEFAULT 'server', meta TEXT)"
-    ).run();
-
-    for (const email of ["l1@example.com", "l2@example.com"]) {
-      await storeCode(env.EMAIL_CODES, email, "123456");
-      const res = await app.request(
-        "/auth/code/verify",
-        { method: "POST", headers: APP_HEADERS, body: JSON.stringify({ email, code: "123456" }) },
-        env
-      );
-      expect(res.status).toBe(200);
-    }
-    await flushStats();
-
-    const { results } = await env.DB.prepare("SELECT event FROM auth_events").all<{ event: string }>();
-    expect(results.filter((r) => r.event === "login")).toHaveLength(2);
-    expect(events.filter((e) => e.event === "stats_schema_outdated")).toHaveLength(1);
-    expect(events.filter((e) => e.event === "stats_unavailable")).toHaveLength(0);
-    // onEvent 钩子照样拿到标识，不依赖表形态
-    expect(events.find((e) => e.event === "login")?.clientVersion).toBe("1.5.0");
-  });
 });

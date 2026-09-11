@@ -119,14 +119,15 @@ export interface LoginConfig {
     refreshTtlMs?: number | null;
   };
   /**
-   * 登录统计（方案见 docs/stats-design.md）。事件写入 `db` 的 `auth_events` 表，
-   * 不引入新 binding、不加依赖。
+   * 登录统计（方案见 docs/stats-design.md）。事件写进 eventbase 的 `events` 表，
+   * 与客户端埋点合表——漏斗的服务端段与客户端段因此才拼得起来。
    *
-   * **默认开启**——数据不能补录，忘配开关就是白丢一段时期的数据；代价（升级后
-   * 未跑 migration 0002）由 stats.ts 的三条 fail-safe 兜住：异常吞掉、异步写、
-   * 首次失败告警一次。
+   * 不配 `stats` 即完全不写统计。代价（忘配、或未对埋点库执行迁移）由 stats.ts
+   * 的三条 fail-safe 兜住：异常吞掉、异步写、首次失败告警一次。
    */
   stats?: {
+    /** 埋点库 binding（eventbase 的 `events` 表所在的 D1） */
+    db: D1Database;
     /** 默认 true；置 false 则一条统计都不写 */
     enabled?: boolean;
   };
