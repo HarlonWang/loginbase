@@ -1,6 +1,13 @@
 // 测试夹具：onVerified 复刻 Tono 语义（users upsert + 90 天试用 + user 载荷），
 // 使平移自 Tono 的 HTTP 测试在钩子化后原样通过——夹具即钩子化等价性的对照组。
 import { env } from "cloudflare:workers";
+import ebEvents from "../node_modules/@whlong/eventbase/migrations/0001_events.sql?raw";
+import ebEventId from "../node_modules/@whlong/eventbase/migrations/0004_event_id.sql?raw";
+import ebDeviceId from "../node_modules/@whlong/eventbase/migrations/0005_device_id.sql?raw";
+import ebCity from "../node_modules/@whlong/eventbase/migrations/0006_geo_city.sql?raw";
+import ebRegion from "../node_modules/@whlong/eventbase/migrations/0007_geo_region.sql?raw";
+
+const EVENTBASE_SCHEMA = [ebEvents, ebEventId, ebDeviceId, ebCity, ebRegion];
 import { createLogin, createSession, signAccessToken } from "../src/index";
 import type { VerifiedResult } from "../src/index";
 
@@ -74,6 +81,17 @@ export async function initDb() {
   `;
   for (const stmt of schema.split(";").filter((s) => s.trim())) {
     await env.DB.prepare(stmt).run();
+  }
+}
+
+/** eventbase 的 events 表（stats.db 路径用）。DDL 直接取自装好的包，与生产同源。 */
+export async function initEventsDb() {
+  for (const stmt of EVENTBASE_SCHEMA.join(";").split(";").filter((s) => s.trim())) {
+    await env.DB.prepare(stmt)
+      .run()
+      .catch((e: Error) => {
+        if (!/duplicate column name/.test(e.message)) throw e;
+      });
   }
 }
 

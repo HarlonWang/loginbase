@@ -11,7 +11,7 @@
 | `/Users/wanghl/loginbase-kt`（`HarlonWang/loginbase-kt`） | **姊妹仓**（2026-08-13 已建）：KMP 客户端库，独立版本线与 CI；协议以本仓 `docs/protocol.md` 为唯一权威，客户端仓不留副本。协议变更须在该仓开跟进 issue（现有 [#1](https://github.com/HarlonWang/loginbase-kt/issues/1) 跟进 1.2.0 的 link 流程） |
 | `/Users/wanghl/TrendingProjects/TrendingAI` | 消费方（第 4 步）：KMP 客户端；`androidApp/.../LogtoAuthManager.kt` 里的竞态防御经验是 loginbase-kt 的需求清单 |
 | `/Users/wanghl/TonoProjects/Tono-Android` | 消费方（第 5 步，不阻塞） |
-| `/Users/wanghl/eventbase`（`HarlonWang/eventbase`） | **姊妹底座**（非本仓依赖）：自建埋点，与本仓同构——服务端库跑在各 App 自己的 Worker、数据落各自 D1、协议只住服务端仓、KMP 客户端住姊妹仓。npm `eventbase@0.0.2`。它是 2026-08-18 依赖准入改判的触发点（登录事件与客户端埋点合表），但**loginbase 目前并未依赖它**，合表接线尚未做 |
+| `/Users/wanghl/eventbase`（`HarlonWang/eventbase`） | **姊妹底座**（非本仓依赖）：自建埋点，与本仓同构——服务端库跑在各 App 自己的 Worker、数据落各自 D1、协议只住服务端仓、KMP 客户端住姊妹仓。npm `eventbase@0.0.2`。它是 2026-08-18 依赖准入改判的触发点（登录事件与客户端埋点合表）。**2026-09-11（1.10.0）接线已做**：本仓将其列为 peerDependency，消费方配 `stats.db` 后登录事件写它的 `events` 表，`auth_events` 转退役路径 |
 | `/Users/wanghl/eventbase-kt`（`HarlonWang/eventbase-kt`） | 埋点 KMP 客户端，`wang.harlon:eventbase-kt` 0.1.0 已发 Maven Central（2026-08-20）；TrendingAI 已接入（替换 Aptabase） |
 
 ## 铁律

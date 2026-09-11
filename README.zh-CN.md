@@ -50,6 +50,14 @@ npx wrangler d1 migrations apply my-app --remote
 
 如果共用一个已有自己迁移的 D1，改为把 `node_modules/loginbase/migrations/` 下的文件复制进你自己的迁移目录。**漏掉 `0002_auth_events.sql` 是静默的**——登录照常工作，只是统计永远不落库。漏掉 `0003_auth_events_client.sql`（1.9.0）同样静默——事件照常落库，只是没有客户端版本 / 平台两列，并告警一次 `stats_schema_outdated`。`0003` 是对 `0002` 建的表做 ALTER，跳过 `0002` 就必须一并跳过 `0003`，否则 apply 报表不存在。
 
+**改把登录事件写进 eventbase。** 如果你同时在用 [eventbase](https://github.com/HarlonWang/eventbase)，把 `stats.db` 指向它的 D1，登录事件就落进它的 `events` 表、与客户端埋点合表——**漏斗的服务端段与客户端段只有这样才拼得起来**。不配则继续写本库的 `auth_events`（退役路径，保留以便回滚）。
+
+```ts
+stats: { db: env.EVENTS_DB },   // 不配则继续用 auth_events
+```
+
+两者只写一处，不双写。配了 `stats.db` 就要对那个库执行 eventbase 的迁移——漏掉同样是静默的，与漏掉 `0002` 一个道理。
+
 **3. 建实例并挂载。** loginbase 只要求你一件事：把一个已验证的身份换成 userId。用户表的一切仍然归你。
 
 ```ts

@@ -7,3 +7,8 @@ declare namespace Cloudflare {
     RESEND_API_KEY: string;
   }
 }
+
+declare module "*.sql?raw" {
+  const content: string;
+  export default content;
+}

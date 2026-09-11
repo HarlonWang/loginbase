@@ -129,6 +129,14 @@ export interface LoginConfig {
   stats?: {
     /** 默认 true；置 false 则一条统计都不写 */
     enabled?: boolean;
+    /**
+     * 埋点库 binding（eventbase 的 `events` 表）。**配了就写它**，登录事件与客户端
+     * 埋点合到一张表，漏斗的服务端段与客户端段才拼得起来；不配则回落写 `db` 的
+     * `auth_events`（退役路径，保留以便回滚）。
+     *
+     * 两者只会写一处，不双写：双写要处理两库不一致，而 `auth_events` 正在退役。
+     */
+    db?: D1Database;
   };
   /**
    * 应用商店审核用的演示账号（Play 与 App Store 共用一个）：命中该邮箱时
