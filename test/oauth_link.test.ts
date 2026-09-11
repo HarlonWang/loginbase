@@ -5,7 +5,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { createLogin, createSession, signAccessToken } from "../src/index";
 import type { LinkedIdentity, LinkResult } from "../src/index";
-import { initDb, wipeKv } from "./helpers";
+import { flushEvents } from "@whlong/eventbase";
+import { initDb, initEventsDb, wipeKv } from "./helpers";
 
 const REDIRECT = "testapp://auth/link";
 
@@ -64,6 +65,22 @@ function makeLogin(onLinked: (i: LinkedIdentity) => LinkResult) {
   }));
 }
 
+/** 开了统计的变体：验证 client_flow_id 一路透传到事件，而不只是躺在 state 里 */
+function makeLoginWithStats(onLinked: (i: LinkedIdentity) => LinkResult) {
+  return createLogin<Cloudflare.Env>((e) => ({
+    db: e.DB,
+    kv: e.EMAIL_CODES,
+    jwt: { secret: e.JWT_SECRET },
+    email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+    socials: {
+      github: { clientId: "cid", clientSecret: "cs", allowedRedirects: [REDIRECT] },
+    },
+    onVerified: () => ({ userId: "u-login" }),
+    onLinked,
+    stats: { db: e.DB },
+  }));
+}
+
 async function tokenFor(userId: string): Promise<string> {
   const { sessionId } = await createSession(env.DB, { userId });
   return signAccessToken(env.JWT_SECRET, userId, sessionId);
@@ -72,7 +89,8 @@ async function tokenFor(userId: string): Promise<string> {
 async function linkStart(
   login: ReturnType<typeof makeLogin>,
   token: string | null,
-  redirect: string = REDIRECT
+  redirect: string = REDIRECT,
+  clientFlowId?: string
 ) {
   return login.app.request(
     "/auth/oauth/github/link/start",
@@ -82,7 +100,10 @@ async function linkStart(
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ redirect }),
+      body: JSON.stringify({
+        redirect,
+        ...(clientFlowId === undefined ? {} : { client_flow_id: clientFlowId }),
+      }),
     },
     env
   );
@@ -117,6 +138,26 @@ describe("POST /auth/oauth/github/link/start", () => {
       // 1.4.0 起随载荷带上统计用的流程标识（见 docs/stats-design.md）
       flowId: expect.any(String),
     });
+  });
+
+  it("client_flow_id 进 state 载荷；非法值静默丢弃、绑定照常", async () => {
+    const login = makeLogin(() => ({ ok: true }));
+    const token = await tokenFor("u-42");
+
+    const ok = await linkStart(login, token, REDIRECT, "cf-link_1");
+    const okState = await env.EMAIL_CODES.get(`oauth:state:${stateOf((await ok.json<{ authorizeUrl: string }>()).authorizeUrl)}`);
+    expect(JSON.parse(okState!).clientFlowId).toBe("cf-link_1");
+
+    // 超长值：与 login 的 start 参数同一条纪律——统计绝不能成为登录的故障源
+    const bad = await linkStart(login, token, REDIRECT, "x".repeat(65));
+    expect(bad.status).toBe(200);
+    const badState = await env.EMAIL_CODES.get(`oauth:state:${stateOf((await bad.json<{ authorizeUrl: string }>()).authorizeUrl)}`);
+    expect(JSON.parse(badState!).clientFlowId).toBeUndefined();
+
+    // 不传照旧
+    const none = await linkStart(login, token);
+    const noneState = await env.EMAIL_CODES.get(`oauth:state:${stateOf((await none.json<{ authorizeUrl: string }>()).authorizeUrl)}`);
+    expect(JSON.parse(noneState!).clientFlowId).toBeUndefined();
   });
 
   it("无 token / 坏 token → 401（link 是鉴权端点，login 的 start 不是）", async () => {
@@ -255,6 +296,35 @@ describe("GET /auth/oauth/github/callback（link 分支）", () => {
     expect(location.searchParams.get("linked")).toBe("github");
     expect(seen?.email).toBeUndefined();
     expect(seen?.verifiedEmails).toEqual([]);
+  });
+
+  it("client_flow_id 一路透传到 oauth_start 与 oauth_callback 事件", async () => {
+    await initEventsDb();
+    await env.DB.prepare("DELETE FROM events").run();
+
+    const login = makeLoginWithStats(() => ({ ok: true }));
+    const token = await tokenFor("u-42");
+    const startRes = await linkStart(login, token, REDIRECT, "cf-link_e2e");
+    const { authorizeUrl } = await startRes.json<{ authorizeUrl: string }>();
+    mockGithub(fetchSpy, {});
+    await login.app.request(
+      `/auth/oauth/github/callback?code=gh-code&state=${stateOf(authorizeUrl)}`,
+      { method: "GET" },
+      env
+    );
+    await flushEvents();
+
+    const { results } = await env.DB.prepare(
+      "SELECT name, props FROM events WHERE source='server' ORDER BY id"
+    ).all<{ name: string; props: string | null }>();
+    // link 不产生 oauth_exchange（不发 token），故只核对这两个
+    for (const name of ["oauth_start", "oauth_callback"]) {
+      const row = results.find((r) => r.name === name);
+      expect(row, name).toBeDefined();
+      const props = JSON.parse(row!.props!) as Record<string, unknown>;
+      expect(props.clientFlowId, name).toBe("cf-link_e2e");
+      expect(props.mode, name).toBe("link");
+    }
   });
 
   it("state 单次使用：同一 state 二次 callback → 400 invalid_state", async () => {

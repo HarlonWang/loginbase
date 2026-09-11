@@ -59,14 +59,18 @@ interface ClientProbe {
   clientFlowId?: string;
 }
 
+/** `client_flow_id` 的取值校验：login 从 query 来、link 从 POST body 来，共用这一处 */
+function clientFlowIdOf(raw: unknown): { clientFlowId?: string } {
+  return typeof raw === "string" && CLIENT_FLOW_ID_PATTERN.test(raw) ? { clientFlowId: raw } : {};
+}
+
 function clientProbe(c: { req: { query(name: string): string | undefined } }): ClientProbe {
   const out: ClientProbe = {};
   const tier = c.req.query("browser_tier");
   if (tier && BROWSER_TIERS.has(tier)) out.browserTier = tier;
   const pkg = c.req.query("browser_pkg");
   if (pkg && BROWSER_PKG_PATTERN.test(pkg)) out.browserPkg = pkg;
-  const cfid = c.req.query("client_flow_id");
-  if (cfid && CLIENT_FLOW_ID_PATTERN.test(cfid)) out.clientFlowId = cfid;
+  Object.assign(out, clientFlowIdOf(c.req.query("client_flow_id")));
   return out;
 }
 
@@ -369,8 +373,8 @@ export function registerGithubOauth<TEnv>(
     if (!gh || !cfg(c).onLinked) return c.json({ error: "not_configured" }, 404);
 
     const body = await c.req
-      .json<{ redirect?: string }>()
-      .catch(() => ({}) as { redirect?: string });
+      .json<{ redirect?: string; client_flow_id?: string }>()
+      .catch(() => ({}) as { redirect?: string; client_flow_id?: string });
     const redirect = trimmedField(body.redirect);
     if (!redirect || !redirectAllowed(redirect, gh)) {
       track(c, {
@@ -384,11 +388,14 @@ export function registerGithubOauth<TEnv>(
 
     const state = randomToken();
     const flowId = crypto.randomUUID();
+    // 与 login 的 start 参数同义，只是 link 走 POST body（这步要 Bearer，导航带不了头）
+    const probe = clientFlowIdOf(body.client_flow_id);
     const record: StateRecord = {
       redirect,
       mode: "link",
       userId: c.get("userId"),
       flowId,
+      ...probe,
       ...clientToState(clientOf(c)),
     };
     await cfg(c).kv.put(`oauth:state:${state}`, JSON.stringify(record), {
@@ -401,7 +408,7 @@ export function registerGithubOauth<TEnv>(
       provider: "github",
       userId: c.get("userId"),
       flowId,
-      meta: { mode: "link" },
+      meta: { mode: "link", ...probe },
     });
     return c.json(
       { authorizeUrl: buildAuthorizeUrl(gh, callbackUrlFor(c, gh), state) },

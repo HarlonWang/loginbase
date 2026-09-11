@@ -138,7 +138,12 @@ Bearer 鉴权。吊销该用户全部会话。成功 `204`；无/坏 token `401`
 
 ### POST /oauth/github/link/start（1.2.0 起）
 
-**已登录用户绑定第二身份**。Bearer 鉴权；请求 `{ "redirect": string }`。
+**已登录用户绑定第二身份**。Bearer 鉴权；请求 `{ "redirect": string, "client_flow_id"?: string }`。
+
+`client_flow_id`（2.1.0 起）语义与 login `start` 的同名 query 参数完全一致（值域见上表），
+只是 link 走 POST body——这步要 Bearer，浏览器导航带不了头。**非法值静默丢弃**，
+绝不因此拒绝绑定。`browser_tier` / `browser_pkg` 不在此收：那两个描述的是客户端**打算**
+怎么开浏览器，而 link 的授权 URL 由服务端返回、客户端自行打开，服务端无从核对。
 
 | 结果 | 状态码 | 响应 |
 |---|---|---|
@@ -207,6 +212,9 @@ GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注�
 
 ## 版本历史
 
+- **2.1.0**（2026-09-11）：`link/start` 的请求体新增**可选** `client_flow_id`，随 state 透传进
+  `oauth_start` / `oauth_callback` 事件，使绑定流程也能与消费方埋点跨库对齐（login 侧自 1.7.0 已有）。
+  **wire 向后兼容、错误码零新增**：不传即为空；老服务端忽略未知键，故客户端可先于服务端发布。
 - **1.9.0**（2026-09）：新增**可选**客户端标识——App 直连请求的 `X-Client-Version` / `X-Client-Platform` 头与 `oauth/{provider}/start` 的 `client_version` / `client_platform` 参数，落 `auth_events` 新增两列（migration 0003，非幂等），并透传进 `onVerified` / `onLinked` 的 `requestMeta`。**wire 向后兼容、错误码零新增**：不带即为空；老服务端忽略未知头与参数，故客户端可先于服务端发布。服务端未跑 0003 时事件按旧表形态落库并告警一次 `stats_schema_outdated`。同版本定下铁律：服务端永不从 UA 解析版本或平台（CLAUDE.md）。
 
 - **1.6.0**（2026-08）：GitHub callback 收到 `?error=`（无 `code`）时改为 **302 回跳** `{redirect}?error={error}`（典型 `access_denied`，字符集不合法或缺省时回落 `no_code`），并以该值作为 `oauth_callback` 的 outcome。此前它与「state 读不出」合并在一个分支，一律 `400 invalid_state`——把「用户在授权页点了拒绝」记成了 state 无效，且用户被留在浏览器的错误页上收不到回跳。**wire 向后兼容**：新增的是一种已存在形态的回跳（`?error=` 早就是 callback 的失败约定），不认识 `access_denied` 的老客户端按既有未知 error 分支处理。**state 无效时的 400 不变**——那种情况回跳地址不可信。
