@@ -65,13 +65,13 @@ function clientFlowIdOf(raw: unknown): { clientFlowId?: string } {
 }
 
 function clientProbe(c: { req: { query(name: string): string | undefined } }): ClientProbe {
-  const out: ClientProbe = {};
   const tier = c.req.query("browser_tier");
-  if (tier && BROWSER_TIERS.has(tier)) out.browserTier = tier;
   const pkg = c.req.query("browser_pkg");
-  if (pkg && BROWSER_PKG_PATTERN.test(pkg)) out.browserPkg = pkg;
-  Object.assign(out, clientFlowIdOf(c.req.query("client_flow_id")));
-  return out;
+  return {
+    ...(tier && BROWSER_TIERS.has(tier) ? { browserTier: tier } : {}),
+    ...(pkg && BROWSER_PKG_PATTERN.test(pkg) ? { browserPkg: pkg } : {}),
+    ...clientFlowIdOf(c.req.query("client_flow_id")),
+  };
 }
 
 // 客户端标识（版本 / 平台）与 probe 分开：它们落列不落 meta。浏览器发出的 start 带不了 App 的头，
