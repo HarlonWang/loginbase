@@ -43,7 +43,7 @@ export function createAuthApp<TEnv>(
   const auth = new Hono<{ Variables: AuthVariables }>().basePath(basePath);
   const cfg = (c: { env: unknown }) => getConfig(c.env as TEnv);
   const emit = (c: { env: unknown }) => cfg(c).onEvent ?? logEvent;
-  // 统计事件统一出口：内部先喂 onEvent（形态与 1.3.0 一致），再异步落 auth_events
+  // 统计事件统一出口：内部先喂 onEvent（形态与 1.3.0 一致），再异步写埋点库
   const track = createTracker(getConfig);
   const accessTtl = (c: { env: unknown }) =>
     cfg(c).jwt.accessTtlSeconds ?? ACCESS_TTL_SECONDS;

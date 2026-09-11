@@ -48,15 +48,15 @@ migrations_dir = "node_modules/loginbase/migrations"
 npx wrangler d1 migrations apply my-app --remote
 ```
 
-Sharing a D1 that already has migrations of its own? Copy the files from `node_modules/loginbase/migrations/` into your own migrations directory instead. **Skipping `0002_auth_events.sql` is silent** — login keeps working, analytics just never land. Skipping `0003_auth_events_client.sql` (1.9.0) is silent too — events still land, only without the client version/platform columns, and you get one `stats_schema_outdated` warning. `0003` alters the table `0002` creates, so if you skip `0002` you must skip `0003` as well.
+Sharing a D1 that already has migrations of its own? Copy the files from `node_modules/loginbase/migrations/` into your own migrations directory instead. Only `0001_sessions.sql` is required. `0002_auth_events.sql` and `0003_auth_events_client.sql` built the `auth_events` table that 1.x wrote to — **2.0.0 no longer writes it**, so new integrations can skip both. They remain in the package because databases that already applied them would otherwise show a ledger/file mismatch.
 
-**Sending login events to eventbase instead.** If you also run [eventbase](https://github.com/HarlonWang/eventbase), point `stats.db` at its D1 and login events land in its `events` table alongside your client-side analytics — which is the only way the funnel's server half and client half can be joined. Without it, events keep going to this library's own `auth_events` (the retiring path, kept so you can roll back).
+**2b. Point statistics at eventbase.** Login events go to [eventbase](https://github.com/HarlonWang/eventbase)'s `events` table, sharing one table with your client-side analytics — which is the only way the funnel's server half and client half can be joined.
 
 ```ts
-stats: { db: env.EVENTS_DB },   // omit to keep using auth_events
+stats: { db: env.EVENTS_DB },   // omit `stats` entirely to record nothing
 ```
 
-Only one of the two is written, never both. When `stats.db` is set, run eventbase's migrations on that database — skipping them is silent in the same way `0002` is.
+Run eventbase's migrations on that database. Skipping them is silent: login keeps working, statistics just never land, and you get one `stats_unavailable` warning.
 
 **3. Create and mount.** The only thing loginbase asks of you is how to turn a verified identity into a user id. Everything about your user table stays yours.
 

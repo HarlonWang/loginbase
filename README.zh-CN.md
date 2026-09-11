@@ -48,15 +48,15 @@ migrations_dir = "node_modules/loginbase/migrations"
 npx wrangler d1 migrations apply my-app --remote
 ```
 
-如果共用一个已有自己迁移的 D1，改为把 `node_modules/loginbase/migrations/` 下的文件复制进你自己的迁移目录。**漏掉 `0002_auth_events.sql` 是静默的**——登录照常工作，只是统计永远不落库。漏掉 `0003_auth_events_client.sql`（1.9.0）同样静默——事件照常落库，只是没有客户端版本 / 平台两列，并告警一次 `stats_schema_outdated`。`0003` 是对 `0002` 建的表做 ALTER，跳过 `0002` 就必须一并跳过 `0003`，否则 apply 报表不存在。
+如果共用一个已有自己迁移的 D1，改为把 `node_modules/loginbase/migrations/` 下的文件复制进你自己的迁移目录。只有 `0001_sessions.sql` 是必须的。`0002_auth_events.sql` 与 `0003_auth_events_client.sql` 建的是 1.x 写入的 `auth_events` 表——**2.0.0 起不再写它**，新接入可以跳过这两个。文件仍随包分发，是因为已经 apply 过它们的库否则会出现「账本有、文件无」的不一致。
 
-**改把登录事件写进 eventbase。** 如果你同时在用 [eventbase](https://github.com/HarlonWang/eventbase)，把 `stats.db` 指向它的 D1，登录事件就落进它的 `events` 表、与客户端埋点合表——**漏斗的服务端段与客户端段只有这样才拼得起来**。不配则继续写本库的 `auth_events`（退役路径，保留以便回滚）。
+**2b. 把统计指向 eventbase。** 登录事件写进 [eventbase](https://github.com/HarlonWang/eventbase) 的 `events` 表，与客户端埋点共用一张表——**漏斗的服务端段与客户端段只有这样才拼得起来**。
 
 ```ts
-stats: { db: env.EVENTS_DB },   // 不配则继续用 auth_events
+stats: { db: env.EVENTS_DB },   // 整个不配 stats 即完全不记统计
 ```
 
-两者只写一处，不双写。配了 `stats.db` 就要对那个库执行 eventbase 的迁移——漏掉同样是静默的，与漏掉 `0002` 一个道理。
+要对那个库执行 eventbase 的迁移。漏掉是静默的：登录照常工作，只是统计永远不落库，并告警一次 `stats_unavailable`。
 
 **3. 建实例并挂载。** loginbase 只要求你一件事：把一个已验证的身份换成 userId。用户表的一切仍然归你。
 

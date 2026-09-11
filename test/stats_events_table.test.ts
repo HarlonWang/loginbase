@@ -1,4 +1,4 @@
-// stats.db 路径：登录事件写进 eventbase 的 events 表（合表），而非本库的 auth_events。
+// 存储契约：事件在 events 表里长什么样。业务语义（哪个事件、什么 outcome）由 stats.test.ts 覆盖。
 import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:workers";
 import { flushEvents } from "@whlong/eventbase";
@@ -53,11 +53,10 @@ beforeEach(async () => {
   await initEventsDb();
   await wipeKv();
   await env.DB.prepare("DELETE FROM events").run();
-  await env.DB.prepare("DELETE FROM auth_events").run();
 });
 
-describe("stats.db：登录事件与客户端埋点合表", () => {
-  it("写 events 表，不写 auth_events", async () => {
+describe("events 表里的存储形态", () => {
+  it("落 events 表，source=server", async () => {
     const { app } = makeLogin();
     expect((await verify(app, "合表@example.com")).status).toBe(200);
     await flushEvents();
@@ -67,11 +66,9 @@ describe("stats.db：登录事件与客户端埋点合表", () => {
     expect(rows.every((r) => r.source === "server")).toBe(true);
     expect(rows.map((r) => r.name)).toContain("login");
 
-    const legacy = await env.DB.prepare("SELECT COUNT(*) n FROM auth_events").first<{ n: number }>();
-    expect(legacy?.n).toBe(0);
   });
 
-  it("auth_events 的独立列进 props，user_id / flow_id 仍是列", async () => {
+  it("1.x 的独立列进 props，user_id / flow_id 仍是列", async () => {
     const { app } = makeLogin();
     await verify(app, "映射@example.com");
     await flushEvents();
@@ -104,13 +101,4 @@ describe("stats.db：登录事件与客户端埋点合表", () => {
     expect(login.region).toBe("Santiago Metropolitan");
   });
 
-  it("不配 stats.db 时仍写 auth_events——退役路径保留以便回滚", async () => {
-    const { app } = makeLogin({ stats: {} });
-    await verify(app, "回滚@example.com");
-    await flushEvents();
-
-    const legacy = await env.DB.prepare("SELECT COUNT(*) n FROM auth_events").first<{ n: number }>();
-    expect(legacy!.n).toBeGreaterThan(0);
-    expect(await eventRows()).toHaveLength(0);
-  });
 });
