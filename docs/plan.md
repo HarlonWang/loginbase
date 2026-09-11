@@ -159,6 +159,12 @@
 | 3. 观察与收敛 | Logto 轨道占比下行 | requireAuth 打点 `track: loginbase\|logto`（第 3 步实现时即埋），退役决策唯一数据源 |
 | 4. 退役 | 删 fallback 与 logto-auth.js，注销 Logto 租户；**注销前必做 email 终扫**（见下方三点式策略③） | `app_users` 映射永久保留（已是正式数据） |
 
+> **✅ 阶段 4 已执行（2026-09-12，api PR #50）**。退役时 Logto 轨日调用 9～31 次（新轨占比 90～98%），
+> 未迁移账号 257（其中近 7 天仍活跃 18）。按「干净下掉、不做兼容」定案：不做强更、不关注册过渡、
+> 不做终扫（08-13 回填后新增且 email 为空的 Logto 账号只有 1 行，预期收益 0～1，放弃）；
+> `app_users.logto_sub` 列一并删除（migration 047 表重建），身份锚点只剩 `github_user_id` / `email`，
+> 晚到者升级后照常按锚点命中原号。老版本（≤1.2.0）登录态与登录入口随之失效，接受。
+
 **Paddle 接入引入的双轨代码（退役时需一并清理，2026-08-15 登记）**：
 
 1. `src/lib/quota.js`：`auth.track === 'loginbase' ? auth.userId : null`（Paddle 判权键）。退役时塌缩成 `auth.userId`；双轨期不能提前删——Logto 轨 `auth.userId` 是 undefined，直传会 D1 绑定报错打挂现网 chat
