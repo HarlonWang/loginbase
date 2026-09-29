@@ -25,8 +25,24 @@ export interface EmailTemplate {
   text?: TemplatePart;
 }
 
-export interface EmailConfig {
-  resendApiKey: string;
+/** 一封渲染完毕、待投递的验证码邮件 */
+export interface EmailMessage {
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+}
+
+/** 自定义投递：抛错即视为发送失败（handler 记 `code_send_failed` 并回 500） */
+export type EmailSender = (message: EmailMessage) => Promise<void>;
+
+/** 投递二选一：内置 Resend（给 key），或自带 `send` */
+export type EmailTransport =
+  | { resendApiKey: string; send?: never }
+  | { send: EmailSender; resendApiKey?: never };
+
+export type EmailConfig = EmailTransport & {
   from: string;
   /** 品牌名，经 ctx.brand 送达内置模板与消费方模板 */
   brand?: string;
@@ -37,7 +53,7 @@ export interface EmailConfig {
   fallbackLocale?: string;
   /** 按 locale 键：覆盖内置语言的任意部件，或新增内置没有的语言（须三件齐全） */
   templates?: Record<string, EmailTemplate>;
-}
+};
 
 const BUILTIN: Record<string, Required<EmailTemplate>> = {
   en: enTemplate,
@@ -229,21 +245,25 @@ export async function sendCodeEmail(
     email,
     ttlMinutes: Math.round(CODE_TTL_SECONDS / 60),
   };
-  const body = {
+  const message: EmailMessage = {
     from: config.from,
-    to: [email],
+    to: email,
     subject: template.subject(ctx),
     html: template.html(ctx),
     text: template.text(ctx),
   };
+  if (config.send) return config.send(message);
+  await sendViaResend(config.resendApiKey, message);
+}
 
+async function sendViaResend(apiKey: string, message: EmailMessage): Promise<void> {
   const res = await fetch(RESEND_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.resendApiKey}`,
+      Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...message, to: [message.to] }),
   });
   if (!res.ok) {
     const msg = await res.text().catch(() => "");

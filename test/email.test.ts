@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { env } from "cloudflare:workers";
-import { sendCodeEmail, type EmailConfig } from "../src/email";
+import { sendCodeEmail, type EmailConfig, type EmailMessage } from "../src/email";
 
 // 平移时的机械改动：sendCodeEmail 第一参数由 Env 改为 EmailConfig（config 注入）
 const emailConfig: EmailConfig = {
@@ -38,5 +38,30 @@ describe("sendCodeEmail", () => {
   it("Resend 返回非 2xx → 抛错", async () => {
     fetchSpy.mockResolvedValue(new Response("boom", { status: 500 }));
     await expect(sendCodeEmail(emailConfig, "u@x.com", "123456")).rejects.toThrow();
+  });
+
+  it("配了 send → 交给它投递，不调 Resend", async () => {
+    const sent: EmailMessage[] = [];
+    const config: EmailConfig = {
+      send: async (m) => { sent.push(m); },
+      from: env.EMAIL_FROM_ADDRESS,
+      brand: "Tono",
+    };
+    await sendCodeEmail(config, "u@x.com", "123456");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].from).toBe(env.EMAIL_FROM_ADDRESS);
+    expect(sent[0].to).toBe("u@x.com");
+    expect(sent[0].subject).toContain("Tono");
+    expect(sent[0].html).toContain("123456");
+    expect(sent[0].text).toContain("123456");
+  });
+
+  it("send 抛错 → sendCodeEmail 抛错", async () => {
+    const config: EmailConfig = {
+      send: async () => { throw new Error("ses down"); },
+      from: env.EMAIL_FROM_ADDRESS,
+    };
+    await expect(sendCodeEmail(config, "u@x.com", "123456")).rejects.toThrow("ses down");
   });
 });

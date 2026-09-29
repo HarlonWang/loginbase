@@ -148,7 +148,7 @@ describe("onEvent", () => {
     afterEach(() => fetchSpy.mockRestore());
 
     async function sendWith(
-      email: Partial<LoginConfig["email"]>,
+      email: Partial<Omit<LoginConfig["email"], "resendApiKey" | "send">>,
       body: Record<string, unknown>
     ) {
       const events: Record<string, unknown>[] = [];

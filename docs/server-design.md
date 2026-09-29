@@ -179,7 +179,7 @@ users 表**不归库**——库对 `user_id` 只存不读，用户表结构、�
 
 - 信道 Resend（`https://api.resend.com/emails`，Bearer key），与 Tono 生产同款；QQ/163 送达率验证与 DirectMail 备选见 design.md 风险节。
 - 端态模板体系（第 2 步）：内置 zh/en 两套（`brand` 注入标题与正文），`templates` 整体覆盖钩子留给完全自定义；母本硬编码的 Tono 英文模板即 en 模板的雏形。**1.3.0 起模板体系改按语言分表，见下节。**
-- 发送已是独立函数（`sendCodeEmail`），将来换信道 = 换实现，不动 handler；transport 接口抽象列入将来项，现在不做。**`send` 钩子**（把发送整个让给消费方，better-auth / Auth.js 核心库的形态）同属将来项，2026-08-14 评估后挂起：它是解开「硬编码 Resend」的唯一口子，但会让「开箱即用」失效，而 Tono 正靠它零配置发信——等真有人要换服务商时再说。
+- **`send` 钩子（2.2.0）**：`email` 的投递二选一——`resendApiKey`（内置 Resend，零配置）或 `send(message)`（消费方自带信道，收到渲染好的 `{ from, to, subject, html, text }`，抛错即发送失败）。类型上互斥，两者都给或都不给编译不过。触发者是 TrendingAI 迁 Amazon SES（2026-09-29）；此前挂起的顾虑是「开箱即用会失效」，保留 Resend 作默认分支即化解，Tono 不受影响。库内不引入任何服务商 SDK，签名与重试归消费方。
 
 ### 语言与模板体系（1.3.0，2026-08-14 定案）
 
