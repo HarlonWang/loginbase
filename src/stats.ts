@@ -72,7 +72,7 @@ export interface TrackContext {
   env: unknown;
   req: { raw: Request };
   /** Hono 在无 ExecutionContext 时访问此属性会抛，故所有读取都包在 try 内 */
-  executionCtx?: ExecutionContext;
+  executionCtx?: Pick<ExecutionContext, "waitUntil">;
 }
 
 function defer(c: TrackContext, p: Promise<unknown>): void {
