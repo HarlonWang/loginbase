@@ -10,7 +10,7 @@
 | 1. 平移 | `loginbase` 0.1.x（Tono 专用） | Tono-Server 现有测试全绿 | 0 |
 | 2. 钩子化 | 1.0.0（泛化，可供外部消费） | Tono 测试依旧绿（等价性）+ 钩子路径新测试 | 1 |
 | 3. TrendingAI 接入 | github-ai-trending-api 双轨上线 | 新注册走 loginbase；存量用户映射回原 user_id | 2 |
-| 4. KMP 客户端 | 新仓 `loginbase-kt` → `wang.harlon:loginbase-kt` 0.1.x + TrendingAI 登录 UI | 两端协议契约测试对齐；新版登录全流程可用 | 2（骨架可先行） |
+| 4. KMP 客户端 | 新仓 `loginbase-kmp` → `wang.harlon:loginbase-kmp` 0.1.x + TrendingAI 登录 UI | 两端协议契约测试对齐；新版登录全流程可用 | 2（骨架可先行） |
 | 5. Tono-Android 换用 | 择机 | 现有登录回归通过 | 4 |
 
 ## 第 0 步：发布设施（一次性，半天量级）✅ 2026-08-12 完成
@@ -223,18 +223,18 @@
 
 ## 第 4 步：KMP 客户端 + TrendingAI 登录 UI
 
-> **任务 0 执行实录（2026-08-13）**：`loginbase@1.2.0` 经 PR #6（merge commit）→ tag → CI → OIDC 发布，provenance 正常，registry 冒烟通过（真包 import + link/start 返回 401）。Sourcery 审查抓到一处真问题——`(body.x ?? "").trim()` 遇非字符串抛 TypeError，把本该 400 的坏请求变成 500；排查发现是**全库同一模式共 6 处**（含无鉴权的 `/oauth/exchange`），抽 `trimmedField` 统一修掉，正常路径零变化。测试 70 → 87，其中防御类 5 个做过反向验证（还原旧实现即转红）。分仓纪律的跟进 issue 已开：[loginbase-kt#1](https://github.com/HarlonWang/loginbase-kt/issues/1)（客户端版本落地前不关）。
+> **任务 0 执行实录（2026-08-13）**：`loginbase@1.2.0` 经 PR #6（merge commit）→ tag → CI → OIDC 发布，provenance 正常，registry 冒烟通过（真包 import + link/start 返回 401）。Sourcery 审查抓到一处真问题——`(body.x ?? "").trim()` 遇非字符串抛 TypeError，把本该 400 的坏请求变成 500；排查发现是**全库同一模式共 6 处**（含无鉴权的 `/oauth/exchange`），抽 `trimmedField` 统一修掉，正常路径零变化。测试 70 → 87，其中防御类 5 个做过反向验证（还原旧实现即转红）。分仓纪律的跟进 issue 已开：[loginbase-kmp#1](https://github.com/HarlonWang/loginbase-kmp/issues/1)（客户端版本落地前不关）。
 
-> **2026-08-13 定：客户端走独立仓 `HarlonWang/loginbase-kt`**（原计划的 `kotlin/` 子目录取消，理由见 design.md「两个仓库」节）。`protocol.md` 仍只住服务端仓，客户端仓不留副本；两仓独立版本线，tag 各为裸版本号，客户端从 `0.1.0` 起步。
+> **2026-08-13 定：客户端走独立仓 `HarlonWang/loginbase-kmp`**（原计划的 `kotlin/` 子目录取消，理由见 design.md「两个仓库」节）。`protocol.md` 仍只住服务端仓，客户端仓不留副本；两仓独立版本线，tag 各为裸版本号，客户端从 `0.1.0` 起步。
 
 0. ✅ **服务端补齐**（`loginbase@1.2.0` 已发布，见上方实录与下方两个议题小节）：`socials.github.scope` 可配、`onVerified` 的 identity 带 `providerAccessToken`（+ 可选 `verifiedEmails`）、**link 流程**（`link/start` + callback 分流 + `onLinked` 钩子）；protocol.md 与实现同 commit；
-1. ✅ **已建**（2026-08-13）：`HarlonWang/loginbase-kt`，本地 `/Users/wanghl/loginbase-kt`。gradle 骨架照抄 kmp-webview（vanniktech、android + iosArm64 + iosSimulatorArm64、坐标 `wang.harlon:loginbase-kt`）；CI 两条——build 在 ubuntu 只跑 `testAndroidHostTest`（ubuntu 编不了 iOS，故 iOS 编译在本地验过三 target 全绿），publish 在 macos 由裸版本号 tag 触发。骨架内容：`PROTOCOL_VERSION` + `AuthError`/`RefreshFailure` 错误码枚举及契约测试（未知 wire 值落 UNKNOWN，服务端将来加码不炸老客户端）。**发布前待办：新仓的四个 Maven Central secrets 尚未配置**（值在 HarlonWang/secrets 的 `maven-publishing/`，需本人操作）；
-2. ✅ **已实现**（2026-08-13，loginbase-kt PR #2）：`AuthClient`（send/verify/refresh/signOut/exchange/link 的 Ktor 封装）、`TokenStore` 接口 + Android(SharedPreferences)/iOS(NSUserDefaults) 平台实现（**同步落盘**，multiplatform-settings 已弃用，理由见 design.md 依赖收紧）、`AuthState` flow、**单飞 refresh**（互斥锁 + 进锁后重读复用，护栏预算的客户端前提，见 server-design.md 场景矩阵）；
+1. ✅ **已建**（2026-08-13）：`HarlonWang/loginbase-kmp`，本地 `/Users/wanghl/loginbase-kmp`。gradle 骨架照抄 kmp-webview（vanniktech、android + iosArm64 + iosSimulatorArm64、坐标 `wang.harlon:loginbase-kmp`）；CI 两条——build 在 ubuntu 只跑 `testAndroidHostTest`（ubuntu 编不了 iOS，故 iOS 编译在本地验过三 target 全绿），publish 在 macos 由裸版本号 tag 触发。骨架内容：`PROTOCOL_VERSION` + `AuthError`/`RefreshFailure` 错误码枚举及契约测试（未知 wire 值落 UNKNOWN，服务端将来加码不炸老客户端）。**发布前待办：新仓的四个 Maven Central secrets 尚未配置**（值在 HarlonWang/secrets 的 `maven-publishing/`，需本人操作）；
+2. ✅ **已实现**（2026-08-13，loginbase-kmp PR #2）：`AuthClient`（send/verify/refresh/signOut/exchange/link 的 Ktor 封装）、`TokenStore` 接口 + Android(SharedPreferences)/iOS(NSUserDefaults) 平台实现（**同步落盘**，multiplatform-settings 已弃用，理由见 design.md 依赖收紧）、`AuthState` flow、**单飞 refresh**（互斥锁 + 进锁后重读复用，护栏预算的客户端前提，见 server-design.md 场景矩阵）；
 3. LogtoAuthManager 竞态经验逐条固化核对：token 获取互斥串行化、丢回执重试（与救活配合）、时钟偏差归因、invalid_refresh_token 判定与登出策略；
 4. 协议契约测试：对 `protocol.md` 的错误码/字段断言两端各写一套（客户端侧 ktor MockEngine）；客户端仓 publish workflow 打通（macos runner，凭证从 HarlonWang/secrets 配 GitHub Secrets）；
 5. TrendingAI shared 接入（commonMain 登录 UI），发版切换；分仓版协议纪律（服务端 + protocol.md 同 commit + 客户端仓跟进 issue）从此全面生效。
 
-**验收**：loginbase-kt 发布可拉取；TrendingAI 新版邮箱 + GitHub 登录全流程可用；竞态清单逐条有对应测试或代码注释交代；升级过渡 UX 按下述 C 方案验收；**GitHub 数据面（star / following / feed / profile）在新版上零退化**。
+**验收**：loginbase-kmp 发布可拉取；TrendingAI 新版邮箱 + GitHub 登录全流程可用；竞态清单逐条有对应测试或代码注释交代；升级过渡 UX 按下述 C 方案验收；**GitHub 数据面（star / following / feed / profile）在新版上零退化**。
 
 ### GitHub token 取回（议题 1，2026-08-13 定案）
 
@@ -304,7 +304,7 @@
 
 ### TrendingAI 接入实录（2026-08-13，进行中）
 
-**已完成**：composite build 接通（`local.properties` 配 `loginbase-kt.dir`）；`LoginbaseAuthManager` 实现既有 `AuthManager` 接口 → 6 个登录入口零改动；`LoginSheetHost` 取代方式选择器（邮箱两屏原生 + GitHub 按钮同屏）；token 取回切到自家端点（`LogtoAccountApi` → `GithubTokenApi`，响应形状对齐故 4 个 provider 与 `RepoStarService` 一行未改）；deepLink 全链路。
+**已完成**：composite build 接通（`local.properties` 配 `loginbase-kmp.dir`）；`LoginbaseAuthManager` 实现既有 `AuthManager` 接口 → 6 个登录入口零改动；`LoginSheetHost` 取代方式选择器（邮箱两屏原生 + GitHub 按钮同屏）；token 取回切到自家端点（`LogtoAccountApi` → `GithubTokenApi`，响应形状对齐故 4 个 provider 与 `RepoStarService` 一行未改）；deepLink 全链路。
 
 **生产端到端验证通过**：邮箱验证码登录（zh 模板、命中原账号）、GitHub 登录（Pro 权益打通、GitHub profile 数据正常、`gh_token_enc` 非空）。
 
@@ -321,7 +321,7 @@
 
 ### 待讨论（挂起，动 TrendingAI 前需对齐）
 
-- **OAuth 回跳机制是否下沉到 loginbase-kt**（2026-08-14 记，审查中提出）：当前边界是「库给 URL，消费方走完流程」——`githubSignInUrl()` / `githubLinkUrl()` 在库里，而**打开浏览器、deepLink 注册、回跳解析、取消兜底、接收 Activity 全在消费方**。design.md 的客户端范围只写了 AuthClient/TokenStore/AuthState/单飞，从未论证过这条线。
+- **OAuth 回跳机制是否下沉到 loginbase-kmp**（2026-08-14 记，审查中提出）：当前边界是「库给 URL，消费方走完流程」——`githubSignInUrl()` / `githubLinkUrl()` 在库里，而**打开浏览器、deepLink 注册、回跳解析、取消兜底、接收 Activity 全在消费方**。design.md 的客户端范围只写了 AuthClient/TokenStore/AuthState/单飞，从未论证过这条线。
 
   **代价已经兑现**：第 4 步在 TrendingAI 侧踩的两个坑（关掉浏览器无回调导致面板永远转圈、回跳新建 Activity 实例导致 otc 无人消费）都与业务无关、且**任何用 loginbase 做 OAuth 的 App 都要各踩一遍**——第 5 步 Tono-Android 接入时会原样重来。
 
@@ -343,7 +343,7 @@
   **两条候选路线（都未定）**：①**PKCE 式绑定**——`start` 收 `code_challenge`、`exchange` 验 `code_verifier`，抢到 otc 也换不出令牌，把接管降级成「本次登录失败」；协议级、跨平台、跨消费方，成本约几十行 + 协议 minor。②**App Links**——`https://` + `assetlinks.json` 签名校验，系统直接路由；只覆盖 Android，且要处理 **Play App Signing 的证书指纹**（不是上传证书，经典坑）、debug 指纹、验证失败时链接落到浏览器需要真实兜底页、Android 12+ 验证更严。RFC 8252 是**两者都要**；若只做一件，①的收益面更广、成本更低。
 
   **不阻塞发版**：触发要求「设备上装了专门抢注这个 scheme+host 的恶意 App」+「回跳时选错」，不是可规模化利用的路径。
-- ~~**单飞 refresh**~~ ✅ **2026-08-14 对齐完毕、讨论关闭**：机制通过（与 Auth0 CredentialsManager 同形，比 AppAuth 严、比 Supabase 保守），服务端护栏 1h/3 次的参数不用动。收尾两件已做（loginbase-kt `fix/singleflight-boundary`）：①「每进程一个实例」从隐式假设写成显式契约；②注入的 HttpClient 若没配超时，挂住的请求会永久持锁——按需补装 HttpTimeout 作保险丝。业界对照与「Ktor 内建单飞为何替代不了」记在 design.md 客户端节。
+- ~~**单飞 refresh**~~ ✅ **2026-08-14 对齐完毕、讨论关闭**：机制通过（与 Auth0 CredentialsManager 同形，比 AppAuth 严、比 Supabase 保守），服务端护栏 1h/3 次的参数不用动。收尾两件已做（loginbase-kmp `fix/singleflight-boundary`）：①「每进程一个实例」从隐式假设写成显式契约；②注入的 HttpClient 若没配超时，挂住的请求会永久持锁——按需补装 HttpTimeout 作保险丝。业界对照与「Ktor 内建单飞为何替代不了」记在 design.md 客户端节。
 
 ### 邮件语言与模板体系（2026-08-14 定案，待实施；原「邮件 locale」挂起项就此关闭）
 
@@ -357,7 +357,7 @@
 |---|---|---|
 | 1 | 库（服务端） | `locale` → `fallbackLocale`（正名 + 放宽为 string）；`templates` 由整体覆盖改为**按 locale 分表 + 部件级可选**；模板签名 `(code) => string` → `(ctx) => string`；内置 zh/en 由三元判断重构成表；配置解析期告警 |
 | 2 | 协议 | `POST /code/send` 请求体加**可选** `locale`（BCP 47），错误码表**零新增** → 客户端无任何新错误分支 |
-| 3 | 客户端库 | loginbase-kt 加 `localeProvider`（默认 `platformLanguageTag`）+ 平台 expect/actual |
+| 3 | 客户端库 | loginbase-kmp 加 `localeProvider`（默认 `platformLanguageTag`）+ 平台 expect/actual |
 | 4 | 消费方 | ✅ TrendingAI 后端升级依赖 + 删掉旧键（[PR #36](https://github.com/HarlonWang/github-ai-trending-api/pull/36)，顺序 A 下连 `fallbackLocale` 都不配）；Tono-Server 无 diff |
 
 **版本决定（2026-08-14 定）**：**发 `1.3.0`，含破坏性配置变更，且不做任何兼容逻辑**。即：旧键 `locale` 直接删、`templates` 旧形状不认，也不推 major。
@@ -389,7 +389,7 @@
 
 1. ✅ **库 1.3.0 已发布**（2026-08-14，PR #7 → tag → CI → OIDC，provenance 正常）：`resolveTemplates` 重写（三条规则 + 支持集 + 部件合并）、`fallbackLocale` 改名、`ctx` 化模板签名、内置表化、配置告警、`/code/send` 读 locale、`onEvent` 记 locale；`protocol.md` 同 commit 落 1.3.0。测试 87 → 116。
    > 执行实录：**Sourcery 本周额度用尽（`weekly rate limit`），该 PR 无 AI 审查**，改为自审，抓到 `templates` 里归一化认不出的键（如 `"中文"`）会被索引静默丢掉——语法合法却永不命中的死配置，补 `invalid_locale_key` 告警。三条核心规则做过反向验证（支持集放宽 / 一步截主语言 / 跨语言取件，还原任一即转红）；其中「一步截主语言」第一次**没转红**，说明测试没真区分，补 `zh-Hant-TW` 三级标签用例才有效——两级标签在两种实现下结果相同，是个会骗过 review 的盲区。registry 冒烟用**真包**跑了 14 条断言（含「旧键 `locale` 不再生效」的 BREAKING 实证）。
-2. ✅ **客户端 loginbase-kt 已实现并已发版**（实现 2026-08-14，[PR #4](https://github.com/HarlonWang/loginbase-kt/pull/4) 合并；发版 2026-08-15 `0.1.0` / 08-17 `0.1.1`，Maven Central）：`localeProvider` + `platformLanguageTag()` expect/actual + 契约测试（23 → 33，含 host test 用 `Locale.ROOT` 构造「系统给不出语言」）；`PROTOCOL_VERSION` 1.3.0。当时发版卡在 Maven Central 四个 secrets（见第 4 步任务 1），跟进 [issue #3](https://github.com/HarlonWang/loginbase-kt/issues/3) 按纪律保持打开（PR 正文的 `closes` 误关过一次，已重开）——**secrets 已配、库已发版，该 issue 已关闭**。
+2. ✅ **客户端 loginbase-kmp 已实现并已发版**（实现 2026-08-14，[PR #4](https://github.com/HarlonWang/loginbase-kmp/pull/4) 合并；发版 2026-08-15 `0.1.0` / 08-17 `0.1.1`，Maven Central）：`localeProvider` + `platformLanguageTag()` expect/actual + 契约测试（23 → 33，含 host test 用 `Locale.ROOT` 构造「系统给不出语言」）；`PROTOCOL_VERSION` 1.3.0。当时发版卡在 Maven Central 四个 secrets（见第 4 步任务 1），跟进 [issue #3](https://github.com/HarlonWang/loginbase-kmp/issues/3) 按纪律保持打开（PR 正文的 `closes` 误关过一次，已重开）——**secrets 已配、库已发版，该 issue 已关闭**。
 3. ✅ **消费方已上线**（2026-08-14，[PR #36](https://github.com/HarlonWang/github-ai-trending-api/pull/36) 合并即自动部署生产）：依赖钉死 `1.3.0`（不用 caret——配置 BREAKING 会随 minor 发，`^` 不再等于「可安全自动升级」）、删掉 `locale: 'zh'` 且**不配 `fallbackLocale`**、新增 5 个测试把断言落在**实际发给 Resend 的 subject** 上。TrendingAI 客户端随下一次发版自然获得 G2 能力（库默认自动传，**客户端零代码改动**）。
    > **反向验证推翻了一个原以为的风险**：单纯留着旧键 `locale: 'zh'` 是**无害**的（键被忽略、兜底落到库内置 en，恰好是想要的结果）；真正会退化的是**把旧值照搬到新键** `fallbackLocale: 'zh'`（3 个测试转红）。故升级动作的重点不是「别忘了改名」，而是「重新决定兜底语言应该是什么」。
 4. **仅顺序 B 需要**：观察 `locale.fallback` 占比，G1 退场后删掉 `fallbackLocale: 'zh'`。顺序 A 下这一批不存在。
@@ -414,9 +414,9 @@
 
 ## 第 5 步：Tono-Android 换用（不阻塞）
 
-android target 接入 loginbase-kt，替换其现有登录实现；验收 = Tono-Android 登录回归通过。无时间压力，作为客户端库第二消费方的泛化性检验。
+android target 接入 loginbase-kmp，替换其现有登录实现；验收 = Tono-Android 登录回归通过。无时间压力，作为客户端库第二消费方的泛化性检验。
 
-**⚠️ 接入会带来一次邮件语言变化，属预期而非回归**（2026-08-14 推演出）：Tono-Server 没配兜底（= 内置 `en`），而库内置支持 `zh`；Tono-Android 今天不传 locale，故所有人收英文邮件。换用 loginbase-kt 后客户端**默认自动上报 App 显示语言** → 中文用户开始收**中文邮件**（内置 zh + `brand=Tono`）。三点注意：
+**⚠️ 接入会带来一次邮件语言变化，属预期而非回归**（2026-08-14 推演出）：Tono-Server 没配兜底（= 内置 `en`），而库内置支持 `zh`；Tono-Android 今天不传 locale，故所有人收英文邮件。换用 loginbase-kmp 后客户端**默认自动上报 App 显示语言** → 中文用户开始收**中文邮件**（内置 zh + `brand=Tono`）。三点注意：
 
 1. **现有安全网抓不到它**——第 2 步那条「en + brand=Tono 逐字节锁定」测试锁的是「en 模板长什么样」，不是「谁会收到 en 模板」；第 5 步做完它**依然全绿**，而生产行为已变。
 2. **归因方向是反的**：邮件内容变了，第一反应会去查发信侧（服务端/模板/Resend），但根因是一次客户端发版，中间还隔着商店审核周期。

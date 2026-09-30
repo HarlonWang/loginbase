@@ -686,7 +686,7 @@ describe("客户端标识（1.9.0）：只收结构化头 / 参数，落两列�
 
   const APP_HEADERS = {
     "Content-Type": "application/json",
-    "User-Agent": "TestApp/9.9.9 (Android 14; Pixel) loginbase-kt/0.4.0",
+    "User-Agent": "TestApp/9.9.9 (Android 14; Pixel) loginbase-kmp/0.4.0",
     "X-Client-Version": "1.5.0",
     "X-Client-Platform": "android",
   };

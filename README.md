@@ -7,7 +7,7 @@
 [![npm](https://img.shields.io/npm/v/loginbase)](https://www.npmjs.com/package/loginbase)
 [![license](https://img.shields.io/npm/l/loginbase)](LICENSE)
 
-loginbase mounts into a Worker you already run. Users, sessions and login events live in **your** D1 database — there is no central account server, no vendor dashboard, and nothing extra to deploy. An official Kotlin Multiplatform client, [loginbase-kt](https://github.com/HarlonWang/loginbase-kt), implements the other half.
+loginbase mounts into a Worker you already run. Users, sessions and login events live in **your** D1 database — there is no central account server, no vendor dashboard, and nothing extra to deploy. An official Kotlin Multiplatform client, [loginbase-kmp](https://github.com/HarlonWang/loginbase-kmp), implements the other half.
 
 ## Why
 
@@ -23,7 +23,7 @@ loginbase is the middle path. The session model of a real auth product, shipped 
 - **Token theft is detected; bad networks aren't punished.** Refresh tokens rotate on every use, and a replayed token kills the session on the spot. A refresh response lost to a flaky connection is *not* theft, and gets recovered rather than punished.
 - **Passes app-store review.** Passwordless login can't produce the static credentials Google Play and App Store Connect ask for. An optional demo account can, without opening an authentication bypass.
 - **Login analytics built in.** Every send, verify, refresh and revoke lands in your own `auth_events` table, with geography from `request.cf` — no external dependency, no data leaving your account.
-- **A client that hides tokens entirely.** With [loginbase-kt](https://github.com/HarlonWang/loginbase-kt), your app code never contains a token, a refresh call, or a 401 handler.
+- **A client that hides tokens entirely.** With [loginbase-kmp](https://github.com/HarlonWang/loginbase-kmp), your app code never contains a token, a refresh call, or a 401 handler.
 
 ## Quick start
 
@@ -111,7 +111,7 @@ socials: {
 },
 ```
 
-**5. Connect your app.** Point [loginbase-kt](https://github.com/HarlonWang/loginbase-kt) at `https://your-worker.example.com/auth` and you're done — it owns storage, refresh and the OAuth browser round trip from there.
+**5. Connect your app.** Point [loginbase-kmp](https://github.com/HarlonWang/loginbase-kmp) at `https://your-worker.example.com/auth` and you're done — it owns storage, refresh and the OAuth browser round trip from there.
 
 ## How the two halves line up
 

@@ -7,7 +7,7 @@
 [![npm](https://img.shields.io/npm/v/loginbase)](https://www.npmjs.com/package/loginbase)
 [![license](https://img.shields.io/npm/l/loginbase)](LICENSE)
 
-loginbase 挂进你已经在跑的 Worker。用户、会话、登录事件全部落在**你自己的** D1 里——没有中心化账号服务，没有厂商后台，也不需要额外部署任何东西。官方 Kotlin Multiplatform 客户端 [loginbase-kt](https://github.com/HarlonWang/loginbase-kt) 负责另一半。
+loginbase 挂进你已经在跑的 Worker。用户、会话、登录事件全部落在**你自己的** D1 里——没有中心化账号服务，没有厂商后台，也不需要额外部署任何东西。官方 Kotlin Multiplatform 客户端 [loginbase-kmp](https://github.com/HarlonWang/loginbase-kmp) 负责另一半。
 
 ## 为什么
 
@@ -23,7 +23,7 @@ loginbase 是中间那条路：一套成熟认证产品该有的会话模型，�
 - **盗用会被发现，弱网不会被误伤。** refresh token 每次使用即轮换，重放即当场终止会话；而弱网丢掉的那次回执**不算**盗用，会被救活而不是被惩罚。
 - **过得了应用商店审核。** 无密码登录交不出 Google Play 与 App Store Connect 要的静态凭据，可选的演示账号能——且不开任何鉴权旁路。
 - **内建登录统计。** 发码、验证、刷新、注销逐条落进你自己的 `auth_events` 表，地理信息取自 `request.cf`——零外部依赖，数据不出你的账号。
-- **一个把 token 彻底藏起来的客户端。** 用 [loginbase-kt](https://github.com/HarlonWang/loginbase-kt)，你的 App 代码里不会出现 token、刷新调用或 401 处理。
+- **一个把 token 彻底藏起来的客户端。** 用 [loginbase-kmp](https://github.com/HarlonWang/loginbase-kmp)，你的 App 代码里不会出现 token、刷新调用或 401 处理。
 
 ## 快速开始
 
@@ -111,7 +111,7 @@ socials: {
 },
 ```
 
-**5. 接上你的 App。** 把 [loginbase-kt](https://github.com/HarlonWang/loginbase-kt) 指向 `https://your-worker.example.com/auth` 就完事了——存储、刷新、OAuth 的浏览器往返都归它。
+**5. 接上你的 App。** 把 [loginbase-kmp](https://github.com/HarlonWang/loginbase-kmp) 指向 `https://your-worker.example.com/auth` 就完事了——存储、刷新、OAuth 的浏览器往返都归它。
 
 ## 两端如何对上
 

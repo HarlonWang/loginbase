@@ -1,6 +1,6 @@
 # loginbase 协议契约
 
-> **本文件是 API 契约的唯一权威**，只住服务端仓——客户端仓 `HarlonWang/loginbase-kt` 只链接、不留副本。协议变更必须与服务端实现同 commit，并在客户端仓开跟进 issue、客户端版本落地前不关（2026-08-13 分仓后的纪律，见 CLAUDE.md 铁律与 design.md）。
+> **本文件是 API 契约的唯一权威**，只住服务端仓——客户端仓 `HarlonWang/loginbase-kmp` 只链接、不留副本。协议变更必须与服务端实现同 commit，并在客户端仓开跟进 issue、客户端版本落地前不关（2026-08-13 分仓后的纪律，见 CLAUDE.md 铁律与 design.md）。
 >
 > 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.9.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
 >
@@ -28,7 +28,7 @@
 
 落点：`auth_events.client_version` / `client_platform` 两列（migration 0003）。OAuth 链路里 start 与 callback 取 **start 参数**（随 `state` 透传，`invalid_redirect` 也记），exchange 与 `login` 取 **exchange 请求的头**；link 链路的 callback 取 `link/start` 请求的头。`onVerified` / `onLinked` 的 `requestMeta` 同时带 `clientVersion` / `clientPlatform`（缺席即未上报）。
 
-**版本与设备的自由文本仍走 `User-Agent`**（建议形态 `App/1.5.0 (Android 14; Pixel 7) loginbase-kt/0.4.0`），服务端原样存进 `sessions.user_agent`，供人工排障；**它不是统计轴的来源**。
+**版本与设备的自由文本仍走 `User-Agent`**（建议形态 `App/1.5.0 (Android 14; Pixel 7) loginbase-kmp/0.4.0`），服务端原样存进 `sessions.user_agent`，供人工排障；**它不是统计轴的来源**。
 
 ## 令牌模型
 

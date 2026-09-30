@@ -35,16 +35,18 @@
 
 1. -base 家族全是连写（没有 Fire-base）；连写是品牌名，带杠是描述短语
 2. 硬约束：Kotlin/Java 包名不允许连字符，包名只能是 `wang.harlon.loginbase`——仓库/npm 若带杠会与包名永久错位
-3. 唯一的杠是 `-kt` 产物后缀（`loginbase-kt`），那是区分语言产物的行业惯例（kotlinx-coroutines-core 一脉），与词内分割无关
+3. 唯一的杠是 `-kmp` 产物后缀（`loginbase-kmp`），标明这是 Kotlin Multiplatform 客户端，与词内分割无关
 
 ```
 仓库        HarlonWang/loginbase
 npm         loginbase
-Maven       wang.harlon:loginbase-kt
+Maven       wang.harlon:loginbase-kmp
 Kotlin 包    wang.harlon.loginbase
 类名前缀     Loginbase（如 LoginbaseClient）
 ```
 
 > Maven 坐标 2026-08-10 修订：原定 `wang.harlon.loginbase:loginbase-kt` 是 R2 自建仓时代的写法；改发 Maven Central 后对齐 kmp-webview 惯例（`wang.harlon:kmp-webview`），group 用已验证的裸 namespace，避免 group 末尾与 artifact 前缀重复。Kotlin 包名不变，仍是 `wang.harlon.loginbase`（Maven group 与 Kotlin 包名本就不要求一致，kmp-webview 即先例）。
+
+> 产物后缀 2026-09-30 修订：`-kt` 改为 `-kmp`（仓库 `HarlonWang/loginbase-kmp`、Maven `wang.harlon:loginbase-kmp`），因为库本身是 KMP（Android + iOS），`-kt` 只说明语言、看不出平台范围；同时与 mquickjs-kmp、quickjs-kmp 对齐。旧坐标 `loginbase-kt` 停在 0.5.1。
 
 > npm 坐标 2026-08-12 修订：原定 `@harlonwang/loginbase`，但 npm 账号用户名是 `whlong`、无 `harlonwang` org，scope 当前不可发；权衡「建 org 保 scope / 裸名 / @whlong」后定为**裸名 `loginbase`**——定名时已查证 npm 无占用（本文上节），裸名与仓库名完全一致且最短；代价是放弃 scope 命名空间，接受为独立品牌名。@whlong 因与 GitHub/Maven 命名体系割裂被弃。

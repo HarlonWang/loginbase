@@ -24,7 +24,7 @@
 
 ## 两个仓库：一份协议，两个产物
 
-服务端库与客户端库共享同一份 API 协议（端点、错误码、限流语义、轮换救活行为），**协议是本项目的核心资产**。`protocol.md` 住在服务端仓（错误码、限流参数、轮换救活语义都是服务端行为，权威在此），客户端仓 `HarlonWang/loginbase-kt` 只链接、**不留副本**。
+服务端库与客户端库共享同一份 API 协议（端点、错误码、限流语义、轮换救活行为），**协议是本项目的核心资产**。`protocol.md` 住在服务端仓（错误码、限流参数、轮换救活语义都是服务端行为，权威在此），客户端仓 `HarlonWang/loginbase-kmp` 只链接、**不留副本**。
 
 - **2026-08-13 由 monorepo 改判为分仓**（`kotlin/` 尚未创建，零迁移成本；第 4 步动工前定案）。初版选 monorepo 的理由是「拆两仓协议漂移只是时间问题，单仓一次 commit 同改两端，一个 tag 锁定两侧」，改判基于三点复核：
   1. **monorepo 的机械保证比预期弱**——`protocol.md` 是 markdown、不可执行，两端契约测试无论同仓分仓都是人手写断言对着人读的文档；单仓唯一硬保证是「同一个 commit」这个 git 事实，而单人开发下它拦不住一个人分两次 commit，实际价值是提醒而非强制；
@@ -32,7 +32,7 @@
   3. **两个产物早已完全解耦**——不同 registry、不同 runner（Maven 侧必须 macos）、不同成熟度（服务端已生产 1.1.0，客户端未出生）。单仓要维持这种解耦，反要付出前缀 tag（`loginbase@1.2.0`）、workflow tag 分流、发布前剥前缀等一整套复杂度；分仓后这些全部消失，两边各自回到裸版本号 tag。
 - 附带收益：CI 不再因改 Kotlin 而白跑 TS 测试（反之亦然）；IntelliJ 的 KMP 工程与编辑器的 TS 工程索引/工具链互不干扰；第 5 步 Tono-Android 接入时面对的是纯客户端仓。
 - **代价与补偿**：协议漂移从「commit 层机械阻止」降级为「靠纪律」。补偿手段是两端各留 `PROTOCOL_VERSION` 常量 + 变更走双仓 issue 留痕（见下方纪律）；**CI 自动校验暂不加**（2026-08-13 决定），协议真开始高频演进时再补。
-- 协议变更纪律（分仓版）：服务端实现 + `protocol.md` 必须同 commit；同时在 `loginbase-kt` 仓开跟进 issue，客户端版本落地前不关。
+- 协议变更纪律（分仓版）：服务端实现 + `protocol.md` 必须同 commit；同时在 `loginbase-kmp` 仓开跟进 issue，客户端版本落地前不关。
 
 ## 服务端库设计
 
@@ -53,9 +53,9 @@ const auth = createLogin({
 - **会话模型直接采用 Tono 已验证实现**：JWT access（HS256、1h、载 sub+sid、中间件零查库）+ 轮换 refresh（D1 只存 SHA-256 哈希、family 重用检测、丢回执救活 + 1h/3 次护栏）。曾评估过「不透明 token 每请求查库」方案，弃：吊销延迟 ≤1h 对目标 App 风险等级可接受，换来 requireAuth 零数据库往返；且救活机制从服务端根治了 Logto 时代「轮换竞态 → invalid_grant 僵尸登录态」一族问题（TrendingAI 2026-08-01 事故）。
 - 限流沿用 Tono：KV 三层（60s 冷却、单邮箱 3 次/10min、单 IP 10 次/h），验码 5 次上限、验证即焚。
 
-## 客户端库设计（loginbase-kt）
+## 客户端库设计（loginbase-kmp）
 
-- 仓库：`HarlonWang/loginbase-kt`（独立仓，见上节改判）；协议以本仓 `protocol.md` 为准，客户端仓 README 声明自己对齐到哪个 `loginbase@x.y.z`。
+- 仓库：`HarlonWang/loginbase-kmp`（独立仓，见上节改判）；协议以本仓 `protocol.md` 为准，客户端仓 README 声明自己对齐到哪个 `loginbase@x.y.z`。
 - 范围：`AuthClient`（send/verify/refresh/signOut/oauth exchange/link 的 Ktor 封装）、`TokenStore` 接口 + 平台实现、`AuthState` flow、**单飞 refresh**、**邮件语言上报**（`localeProvider` + `platformLanguageTag()`，见下）。
 - **邮件语言上报（2026-08-14 定，随服务端 1.3.0 落地）**：客户端侧只有两个公开概念——`AuthClient(localeProvider: () -> String? = ::platformLanguageTag)` 与平台取值函数 `platformLanguageTag()`。**规则只有两条**：
 
@@ -89,7 +89,7 @@ const auth = createLogin({
 
 原红线只有「数量」一个杠杆，改判后按**来源**审查：现有基座、业界权威库（生态事实标准、多人维护、发布稳定）、自己的库（`HarlonWang/*`，优先 peerDependency）三类放行，其余仍要停下来问值不值。判据全文见 CLAUDE.md「依赖准入」。2026-09-23 删去 provenance、传递依赖数、安装脚本三条硬判据：主流前端库（ECharts、Chart.js、d3 等）普遍不带 provenance，照判据执行只剩手写一条路。
 
-**改判的触发点**是埋点底座（调研见 `TrendingProjects/埋点自建-调研.md`；**2026-08-20 已落地为实物**：`HarlonWang/eventbase` + `eventbase-kt`，npm `eventbase@0.0.2` / Maven `wang.harlon:eventbase-kt@0.1.0`，与本仓同构的双仓结构，TrendingAI 已用它替换 Aptabase。**但 loginbase 至今未依赖它**——改判解除的是禁令，合表接线本身仍未做，要做时按准入第 3 类走）：登录事件要与客户端埋点合到一张表，最直接的做法是 loginbase 直接用埋点库，旧红线却把它逼成「loginbase 加 `stats.sink` 配置项、消费方在自己的 Worker 里手工注入 writer」的绕法——多一段容易漏配又静默失效的接线（同类事故已有一次：消费方升级包但没跑 migration，统计静默不落库），而安全上并无收益：那是自己的库、同样走 trusted publishing 发布。
+**改判的触发点**是埋点底座（调研见 `TrendingProjects/埋点自建-调研.md`；**2026-08-20 已落地为实物**：`HarlonWang/eventbase` + `eventbase-kmp`，npm `eventbase@0.0.2` / Maven `wang.harlon:eventbase-kmp@0.1.0`，与本仓同构的双仓结构，TrendingAI 已用它替换 Aptabase。**但 loginbase 至今未依赖它**——改判解除的是禁令，合表接线本身仍未做，要做时按准入第 3 类走）：登录事件要与客户端埋点合到一张表，最直接的做法是 loginbase 直接用埋点库，旧红线却把它逼成「loginbase 加 `stats.sink` 配置项、消费方在自己的 Worker 里手工注入 writer」的绕法——多一段容易漏配又静默失效的接线（同类事故已有一次：消费方升级包但没跑 migration，统计静默不落库），而安全上并无收益：那是自己的库、同样走 trusted publishing 发布。
 
 **自己的库优先 peerDependency** 的用意：自己的库在信任维度更高、在版本维度风险反而更大——写成普通 dependency 时消费方 Worker 里可能同时存在库拖来的一份和自己直装的一份，两份各写各的表。
 
@@ -103,7 +103,7 @@ const auth = createLogin({
     2. **解除「仓库必须 public」硬约束**——git 依赖时代 Workers Builds 云端装依赖无凭据、私有仓库必失败；registry 之后 public 与否降为普通偏好；
     3. **构建产物两难提前消解**——git 依赖发编译产物要么消费方 `prepare` 现场构建（慢、flaky），要么提交 `dist/` 进仓库；registry 发布时构建一次，消费方拿现成 tarball；
     4. **安装干净**——只拉 `files` 筛过的 tarball，不 clone 整个仓库。
-- **KMP**：Maven Central 正式发包 `wang.harlon:loginbase-kt`（vanniktech maven-publish 插件，`loginbase-kt` 仓的 tag 触发其自有 CI，在 macos runner 上 `publishAndReleaseToMavenCentral`），照抄 kmp-webview 的成熟链路；Sonatype 凭证与 GPG 签名密钥在私有仓库 HarlonWang/secrets 的 `maven-publishing/`（quickjs-wrapper / feedback-sdk 同源）。
+- **KMP**：Maven Central 正式发包 `wang.harlon:loginbase-kmp`（vanniktech maven-publish 插件，`loginbase-kmp` 仓的 tag 触发其自有 CI，在 macos runner 上 `publishAndReleaseToMavenCentral`），照抄 kmp-webview 的成熟链路；Sonatype 凭证与 GPG 签名密钥在私有仓库 HarlonWang/secrets 的 `maven-publishing/`（quickjs-wrapper / feedback-sdk 同源）。
   - 初版方案曾选 R2 静态 Maven（计划 `maven.harlon.wang`），排除 Central 的理由是「sonatype 流程过重」；2026-08-10 改判：重的部分（账号、`wang.harlon` namespace 验证、GPG key、插件与 workflow 配置）已在 kmp-webview 全部付清，Central 零新增成本，且版本不可变 + 强制 GPG 签名 + 消费方零 repository 配置；R2 自建仓反要维护域名/bucket/同步 workflow，且对象可覆盖、无不可变性——与 npm 侧弃 git-tag 是同一条供应链论证。
   - 仍排除：JitPack（Linux 构建机编不了 iOS target）、GitHub Packages（拉包也要 token）。
 - 发布沿用「打 tag 即发布」习惯，**两仓各自独立版本线**：各仓一个产物，tag 即裸版本号（服务端 `1.2.0`、客户端 `0.1.0`），无需前缀与分流。协议兼容关系由 `protocol.md` 的版本历史 + 客户端 README 的对齐声明表达，不靠版本号相等表达（客户端从 `0.1.0` 起步，不因服务端已到 1.1.0 而虚高）。
