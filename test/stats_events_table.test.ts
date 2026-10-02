@@ -5,7 +5,7 @@ import { flushEvents } from "@whlong/eventbase";
 import { createLogin, storeCode } from "../src/index";
 import { toServerEvent } from "../src/stats";
 import type { LoginConfig } from "../src/index";
-import { initDb, initEventsDb, wipeKv } from "./helpers";
+import { initDb, initEventsDb, wipeKv, mailer } from "./helpers";
 
 interface Row {
   name: string;
@@ -24,7 +24,7 @@ function makeLogin(overrides: Partial<LoginConfig> = {}) {
     db: e.DB,
     kv: e.EMAIL_CODES,
     jwt: { secret: e.JWT_SECRET },
-    email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+    email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
     onVerified: () => ({ userId: "u-events", isNewUser: true }),
     stats: { db: e.DB },
     ...overrides,

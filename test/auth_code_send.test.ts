@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { app, env, initDb } from "./helpers";
+import { describe, it, expect, beforeEach } from "vitest";
+import { app, env, initDb, mailer, sentMessage } from "./helpers";
 
 async function wipeKv() {
   const list = await env.EMAIL_CODES.list();
@@ -7,16 +7,11 @@ async function wipeKv() {
 }
 
 describe("POST /auth/code/send", () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(async () => {
     await initDb();
     await wipeKv();
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("{}", { status: 200 })
-    );
+    mailer.mockClear();
   });
-  afterEach(() => fetchSpy.mockRestore());
 
   async function send(email: string, ip = "1.1.1.1", locale?: unknown) {
     return app.request(
@@ -30,10 +25,7 @@ describe("POST /auth/code/send", () => {
     );
   }
 
-  const sentSubject = () => {
-    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    return JSON.parse(init.body as string).subject as string;
-  };
+  const sentSubject = () => sentMessage().subject;
 
   it("合法邮箱 → 200 { cooldownSeconds }，KV 写入 code:* 与 cooldown:*", async () => {
     const res = await send("u@example.com");
@@ -41,7 +33,7 @@ describe("POST /auth/code/send", () => {
     expect(await res.json()).toEqual({ cooldownSeconds: 60 });
     expect(await env.EMAIL_CODES.get("code:u@example.com")).not.toBeNull();
     expect(await env.EMAIL_CODES.get("cooldown:u@example.com")).toBe("1");
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(mailer).toHaveBeenCalledOnce();
   });
 
   it("大小写 / 首尾空格 被规范化", async () => {
@@ -53,7 +45,7 @@ describe("POST /auth/code/send", () => {
     const res = await send("not-an-email");
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid_email" });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mailer).not.toHaveBeenCalled();
     const list = await env.EMAIL_CODES.list();
     expect(list.keys).toHaveLength(0);
   });
@@ -67,8 +59,8 @@ describe("POST /auth/code/send", () => {
     expect(body.retryAfterSeconds).toBe(60);
   });
 
-  it("Resend 返回 5xx → 500 internal，不落 KV", async () => {
-    fetchSpy.mockResolvedValue(new Response("boom", { status: 500 }));
+  it("send 抛错 → 500 internal，不落 KV", async () => {
+    mailer.mockRejectedValueOnce(new Error("boom"));
     const res = await send("u@example.com");
     expect(res.status).toBe(500);
     expect(await env.EMAIL_CODES.get("code:u@example.com")).toBeNull();

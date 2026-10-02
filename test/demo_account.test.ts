@@ -1,12 +1,12 @@
 // 演示账号（docs/protocol.md「演示账号」）：唯一行为分叉在 /code/send——
 // 码为固定值、不真实发信；其余（限流、存码、verify、建会话）必须与常规
 // 账号走同一条路。这里既验证审核员流程可用，也验证「不存在鉴权旁路」。
-import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { flushEvents } from "@whlong/eventbase";
 import { createLogin, MAX_ATTEMPTS } from "../src/index";
 import { matchDemoAccount } from "../src/demo_account";
 import type { LoginConfig } from "../src/config";
-import { env, app, initDb, initEventsDb, wipeKv, tonoLikeOnVerified } from "./helpers";
+import { env, app, initDb, initEventsDb, wipeKv, tonoLikeOnVerified, mailer } from "./helpers";
 
 const DEMO_EMAIL = "demo.reviewer@example.com";
 const DEMO_CODE = "246810";
@@ -18,7 +18,7 @@ const demoLogin = createLogin<Cloudflare.Env>((e) => ({
   kv: e.EMAIL_CODES,
   jwt: { secret: e.JWT_SECRET },
   email: {
-    resendApiKey: e.RESEND_API_KEY,
+    send: mailer,
     from: e.EMAIL_FROM_ADDRESS,
     brand: "Tono",
   },
@@ -98,18 +98,13 @@ describe("matchDemoAccount 的码校验", () => {
 });
 
 describe("演示账号", () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(async () => {
     await initDb();
     await initEventsDb();
     await wipeKv();
     await env.DB.prepare("DELETE FROM events").run();
-    fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response("{}", { status: 200 }));
+    mailer.mockClear();
   });
-  afterEach(() => fetchSpy.mockRestore());
 
   it("未配置 demoAccount：同一组邮箱和码走常规路径，换不到会话", async () => {
     // 未发过码直接 verify → code_expired，与任意陌生邮箱一致
@@ -122,7 +117,7 @@ describe("演示账号", () => {
 
     // send 会真实发信、码是随机的
     await post(app, "/auth/code/send", { email: DEMO_EMAIL });
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(mailer).toHaveBeenCalledOnce();
 
     // 发码后拿固定码去验也进不来——确证未配置时不存在固定码路径。
     // 直接断言存码不等于固定码，而非撞码时跳过：若「未配置却启用固定码」的
@@ -144,7 +139,7 @@ describe("演示账号", () => {
     const res = await post(demoApp, "/auth/code/send", { email: DEMO_EMAIL });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ cooldownSeconds: 60 });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mailer).not.toHaveBeenCalled();
 
     const stored = JSON.parse(
       (await env.EMAIL_CODES.get(`code:${DEMO_EMAIL}`)) ?? "null"
@@ -200,7 +195,7 @@ describe("演示账号", () => {
       kv: e.EMAIL_CODES,
       jwt: { secret: e.JWT_SECRET },
       email: {
-        resendApiKey: e.RESEND_API_KEY,
+        send: mailer,
         from: e.EMAIL_FROM_ADDRESS,
         brand: "Tono",
       },
@@ -210,7 +205,7 @@ describe("演示账号", () => {
 
     // 演示路径不存在 → send 走常规：真实发信、码随机
     await post(broken, "/auth/code/send", { email: DEMO_EMAIL });
-    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(mailer).toHaveBeenCalledOnce();
 
     // 不带 code 字段（会被读成空串）绝不能换到会话
     const res = await post(broken, "/auth/code/verify", { email: DEMO_EMAIL });
@@ -224,7 +219,7 @@ describe("演示账号", () => {
       kv: e.EMAIL_CODES,
       jwt: { secret: e.JWT_SECRET },
       email: {
-        resendApiKey: e.RESEND_API_KEY,
+        send: mailer,
         from: e.EMAIL_FROM_ADDRESS,
         brand: "Tono",
       },
@@ -233,7 +228,7 @@ describe("演示账号", () => {
     })).app;
 
     await post(padded, "/auth/code/send", { email: DEMO_EMAIL });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mailer).not.toHaveBeenCalled();
     const res = await post(padded, "/auth/code/verify", {
       email: DEMO_EMAIL,
       code: DEMO_CODE,

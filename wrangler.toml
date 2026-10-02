@@ -17,4 +17,3 @@ id = "loginbase-test"
 [vars]
 JWT_SECRET = "test-jwt-secret"
 EMAIL_FROM_ADDRESS = "Loginbase Test <test@example.com>"
-RESEND_API_KEY = "test-resend-key"

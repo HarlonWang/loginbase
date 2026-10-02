@@ -5,14 +5,14 @@ import { env } from "cloudflare:workers";
 import { flushEvents } from "@whlong/eventbase";
 import { createLogin, storeCode } from "../src/index";
 import type { LoginConfig } from "../src/index";
-import { initDb, initEventsDb, wipeKv, createTestUser } from "./helpers";
+import { initDb, initEventsDb, wipeKv, createTestUser, mailer } from "./helpers";
 
 function makeLogin(overrides: Partial<LoginConfig> = {}) {
   return createLogin<Cloudflare.Env>((e) => ({
     db: e.DB,
     kv: e.EMAIL_CODES,
     jwt: { secret: e.JWT_SECRET },
-    email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+    email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
     socials: {
       github: {
         clientId: "test-client-id",
@@ -243,8 +243,6 @@ describe("邮箱验证码链路", () => {
   });
 
   it("code_sent 落库，且给 onEvent 的形态与 1.3.0 一致", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    fetchSpy.mockResolvedValue(new Response("{}", { status: 200 }));
     const events: Record<string, unknown>[] = [];
     const { app } = makeLogin({ onEvent: (e) => events.push(e) });
 
@@ -264,12 +262,10 @@ describe("邮箱验证码链路", () => {
       event: "code_sent",
       locale: { resolved: "en" },
     });
-    fetchSpy.mockRestore();
   });
 
   it("发信失败记 code_send_failed，错误串进 meta", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    fetchSpy.mockResolvedValue(new Response("nope", { status: 500 }));
+    mailer.mockRejectedValueOnce(new Error("ses: 500 nope"));
     const { app } = makeLogin();
 
     const res = await app.request(
@@ -287,15 +283,12 @@ describe("邮箱验证码链路", () => {
     const all = await rows();
     expect(all).toHaveLength(1);
     expect(all[0].event).toBe("code_send_failed");
-    expect(String(all[0].meta)).toContain("500");
-    fetchSpy.mockRestore();
+    expect(String(all[0].meta)).toContain("ses: 500 nope");
   });
 });
 
 describe("限流与主动登出", () => {
   it("限流命中按层记录（cooldown / email / ip）", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    fetchSpy.mockResolvedValue(new Response("{}", { status: 200 }));
     const { app } = makeLogin();
     const send = (email: string) =>
       app.request(
@@ -317,7 +310,6 @@ describe("限流与主动登出", () => {
     expect(limited).toHaveLength(1);
     expect(limited[0].outcome).toBe("cooldown"); // 分层可辨，不靠 retryAfterSeconds 反推
     expect(JSON.parse(String(limited[0].meta)).endpoint).toBe("code_send");
-    fetchSpy.mockRestore();
   });
 
   it("主动登出记 session_revoked，current 与 all 分开", async () => {

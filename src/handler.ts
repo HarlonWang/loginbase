@@ -90,8 +90,7 @@ export function createAuthApp<TEnv>(
       try {
         await sendCodeEmail(cfg(c).email, raw, code, locale.locale);
       } catch (err) {
-        // 发信失败此前不留任何痕迹；邮件是邮箱登录的命脉，断了整条链就没了。
-        // Resend 的 HTTP 码在错误串里，聚合时再解析（不为此改造 email.ts 的抛错形态）。
+        // 错误形态由消费方的 send 决定，原样存串，不在库里解析
         track(c, { event: "code_send_failed", meta: { message: String(err) } });
         return c.json({ error: "internal" }, 500);
       }

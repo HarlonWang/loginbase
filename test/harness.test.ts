@@ -17,6 +17,5 @@ describe("test harness", () => {
   it("测试 vars 注入", () => {
     expect(env.JWT_SECRET).toBe("test-jwt-secret");
     expect(env.EMAIL_FROM_ADDRESS).toBeTruthy();
-    expect(env.RESEND_API_KEY).toBeTruthy();
   });
 });

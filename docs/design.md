@@ -41,7 +41,7 @@
 ```ts
 const auth = createLogin({
   bindings: { db, kv },                    // 各 App 自己的 D1 + KV
-  email: { resendKey, from, templates },   // zh/en 模板、品牌可配
+  email: { send, from, templates },        // zh/en 模板、品牌可配；投递由消费方的 send 负责
   jwt: { secret, ttl },                    // 每 App 独立 secret（账号不互通，token 不互认）
   onVerified: async (email) => userId,     // 用户档案钩子，业务语义在 App 侧
   socials: { github: { clientId, clientSecret, deepLink } },  // 可选插件

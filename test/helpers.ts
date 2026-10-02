@@ -1,6 +1,7 @@
 // 测试夹具：onVerified 复刻 Tono 语义（users upsert + 90 天试用 + user 载荷），
 // 使平移自 Tono 的 HTTP 测试在钩子化后原样通过——夹具即钩子化等价性的对照组。
 import { env } from "cloudflare:workers";
+import { vi } from "vitest";
 import ebEvents from "../node_modules/@whlong/eventbase/migrations/0001_events.sql?raw";
 import ebEventId from "../node_modules/@whlong/eventbase/migrations/0004_event_id.sql?raw";
 import ebDeviceId from "../node_modules/@whlong/eventbase/migrations/0005_device_id.sql?raw";
@@ -9,7 +10,11 @@ import ebRegion from "../node_modules/@whlong/eventbase/migrations/0007_geo_regi
 
 const EVENTBASE_SCHEMA = [ebEvents, ebEventId, ebDeviceId, ebCity, ebRegion];
 import { createLogin, createSession, signAccessToken } from "../src/index";
-import type { VerifiedResult } from "../src/index";
+import type { EmailSender, VerifiedResult } from "../src/index";
+
+/** 测试信道：断言发信与否、读渲染结果，失败用 mockRejectedValueOnce 注入 */
+export const mailer = vi.fn<EmailSender>(async () => {});
+export const sentMessage = (i = 0) => mailer.mock.calls[i][0];
 
 const TRIAL_PERIOD_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -57,7 +62,7 @@ export const login = createLogin<Cloudflare.Env>((e) => ({
   kv: e.EMAIL_CODES,
   jwt: { secret: e.JWT_SECRET },
   email: {
-    resendApiKey: e.RESEND_API_KEY,
+    send: mailer,
     from: e.EMAIL_FROM_ADDRESS,
     brand: "Tono",
   },

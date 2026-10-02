@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { env } from "cloudflare:workers";
 import { createLogin } from "../src/index";
 import type { VerifiedIdentity } from "../src/index";
-import { app, initDb, wipeKv } from "./helpers";
+import { app, initDb, wipeKv, mailer } from "./helpers";
 
 function mockGithub(fetchSpy: ReturnType<typeof vi.spyOn>, opts: {
   token?: string | null;
@@ -105,7 +105,7 @@ describe("GET /auth/oauth/github/start", () => {
       db: e.DB,
       kv: e.EMAIL_CODES,
       jwt: { secret: e.JWT_SECRET },
-      email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+      email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
       socials: {
         github: {
           clientId: "id",
@@ -345,7 +345,7 @@ describe("redirect 白名单结构化校验（防开放重定向）", () => {
     db: e.DB,
     kv: e.EMAIL_CODES,
     jwt: { secret: e.JWT_SECRET },
-    email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+    email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
     socials: {
       github: {
         clientId: "cid",
@@ -399,7 +399,7 @@ describe("onVerified 契约（github provider）", () => {
       db: e.DB,
       kv: e.EMAIL_CODES,
       jwt: { secret: e.JWT_SECRET },
-      email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+      email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
       socials: {
         github: {
           clientId: "cid",
@@ -451,7 +451,7 @@ describe("插件未配置", () => {
       db: e.DB,
       kv: e.EMAIL_CODES,
       jwt: { secret: e.JWT_SECRET },
-      email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+      email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
       onVerified: () => ({ userId: "u-1" }),
     }));
     const res = await bare.app.request(

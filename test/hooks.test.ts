@@ -3,14 +3,14 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { env } from "cloudflare:workers";
 import { createLogin, storeCode } from "../src/index";
 import type { LoginConfig, VerifiedIdentity } from "../src/index";
-import { initDb, wipeKv, createTestUser } from "./helpers";
+import { initDb, wipeKv, createTestUser, mailer } from "./helpers";
 
 function makeLogin(overrides: Partial<LoginConfig> = {}) {
   return createLogin<Cloudflare.Env>((e) => ({
     db: e.DB,
     kv: e.EMAIL_CODES,
     jwt: { secret: e.JWT_SECRET },
-    email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+    email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
     onVerified: () => ({ userId: "u-fixed" }),
     ...overrides,
   }));
@@ -138,23 +138,18 @@ describe("onEvent", () => {
 
   // 静默回落是有意设计（永不 4xx），代价是不可观测——故语言解析结果必须留痕
   describe("邮件语言留痕（1.3.0）", () => {
-    let fetchSpy: ReturnType<typeof vi.spyOn>;
     beforeEach(async () => {
       await wipeKv();
-      fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response("{}", { status: 200 }));
     });
-    afterEach(() => fetchSpy.mockRestore());
 
     async function sendWith(
-      email: Partial<Omit<LoginConfig["email"], "resendApiKey" | "send">>,
+      email: Partial<Omit<LoginConfig["email"], "send">>,
       body: Record<string, unknown>
     ) {
       const events: Record<string, unknown>[] = [];
       const login = makeLogin({
         email: {
-          resendApiKey: env.RESEND_API_KEY,
+          send: mailer,
           from: env.EMAIL_FROM_ADDRESS,
           ...email,
         },
