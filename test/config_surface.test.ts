@@ -8,7 +8,7 @@ import {
   storeCode,
   verifyAccessToken,
 } from "../src/index";
-import { initDb, wipeKv } from "./helpers";
+import { initDb, wipeKv, mailer } from "./helpers";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -16,7 +16,7 @@ const ttlLogin = createLogin<Cloudflare.Env>((e) => ({
   db: e.DB,
   kv: e.EMAIL_CODES,
   jwt: { secret: e.JWT_SECRET, accessTtlSeconds: 60 },
-  email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+  email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
   session: { refreshTtlMs: HOUR_MS },
   onVerified: () => ({ userId: "u-ttl" }),
 }));

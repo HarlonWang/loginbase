@@ -39,7 +39,7 @@
 | 授权页上「用户主动取消」vs「页面根本没加载出来」 | 浏览器内部对 App 不可见，iOS 的 cancel 回调也只说会话被关了、不说原因。**注**：这段黑量本身已可拆三份（见 D15~D17），不可分的只剩这一对原因 |
 | deepLink 被别的 App 劫持后的**去向** | 被接走时我们的客户端什么都收不到。**注**：「回跳丢了」这个事实的判定已可得（见 D18/D19），拿不到的只是它去了哪 |
 | **logto vs loginbase 双轨占比** | 不是客户端能力问题——logto 轨根本不经过本库；退役决策的数据源只能是消费方 `requireAuth` 的 track 打点。何况 Logto 即将退役 |
-| 邮件的真实投递/打开结果 | 与客户端无关，需接 Resend webhook（新外部依赖） |
+| 邮件的真实投递/打开结果 | 与客户端无关，信道归消费方，需在其服务商侧接 webhook |
 
 **由来**：`plan.md`「D 层观察期读数」那次三源手工取数暴露了两个硬伤——Workers Logs 保留 7 天、Logto 审计日志 3 天，历史基线**已永久不可得**；且取数姿势难复现（observability API + 客户端埋点分世代）。本需求即把那次一次性的考古动作，变成长期稳定、口径固定、可回溯的登录数据视图。
 
@@ -230,7 +230,7 @@
 | 事件 | outcome 取值 | 关键字段 | 服务的核心指标 | 现状 |
 |---|---|---|---|---|
 | `code_sent` | — | locale | C2 分母 | ✅ 已有，字段够用 |
-| `code_send_failed` | — | status（Resend HTTP 码） | **G1** | 新增 |
+| `code_send_failed` | — | meta.message（消费方 `send` 抛出的错误串） | **G1** | 新增 |
 | `code_verify` | `ok` / `invalid_code` / `code_not_found` / `too_many_attempts` | — | C2 分子、**C3** | 新增 |
 | `login` | — | provider、user_id、is_new_user、country | **A2 A3 B1 K3** | 新增 |
 | `oauth_start` | `ok` / `invalid_redirect` | flow_id、mode | D4 分母 | 新增 |
@@ -318,7 +318,7 @@ CREATE TABLE IF NOT EXISTS user_first_seen (
 
 1. otc 载荷补 `userId` / `flowId`——当前 `OtcPayload` 只有 token 对与 `isNewUser`，**exchange 端点根本不知道自己让谁登录了**，`login` 事件发不出来。KV 内部结构，不进协议；兑换时把这两个字段解构掉再返回，响应形态因此与 1.3.0 一字不差（有断言锁住）。**provider 不必带**——otc 只由 github 插件生成，端点内即可确定；
 2. OAuth state 记录补 `flow_id`；
-3. `email.ts` 的发信失败改抛带 `status` 的结构化错误——现在是 `throw new Error("Resend failed: 500 ...")`，字符串里有码但取不出来，G1 需要结构化的；
+3. 发信失败的错误形态由消费方 `send` 决定（库不内置信道），库无从结构化，只能原样存错误串；
 4. `/refresh` 成功路径补 `emit`（现在只有异常分支发事件）；
 5. 验码成功、验码失败三分支补 `emit`；
 6. 事件写入通道：**与 `onEvent` 并行的独立出口**，同一个 emit 点扇出到两处。`onEvent` 是给消费方的钩子，不该被库劫持去写自己的表。
@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS user_first_seen (
 |---|---|
 | `auth_events` 表 + migration 0002 | `user_first_seen` 表——v1 不启用保留期清理，K3 从事件表现算就是准的；将来设保留期时再建并回填 |
 | 写入通道（约 60 行新文件） | `ip` / `ua` 列——核心一条都不要求，隐私尺度未定；登录成功那些请求的 ip 本就在 `sessions` 表里 |
-| 10 个服务端事件的 emit 点 | `email.ts` 抛结构化错误——降级为把错误串塞进 `meta`，Resend 的 status 本就在串里 |
+| 10 个服务端事件的 emit 点 | 结构化发信错误——错误串原样塞进 `meta` |
 | `flow_id` 串联 | 保留期与 purge、客户端上报、查询 API、看板 |
 | otc 载荷补 `userId` / `flowId` | |
 

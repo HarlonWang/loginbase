@@ -1,7 +1,7 @@
 // 邮件语言与模板体系（2.0.0 重写；原第 2 步的「内置 zh/en + 整体覆盖」测试并入）。
 // 规则见 docs/server-design.md「语言与模板体系」：①语言只解析一次 ②同语言内合并
 // ③选中语言不在支持集则整封回落兜底语言。
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { env } from "cloudflare:workers";
 import {
   sendCodeEmail,
@@ -11,12 +11,13 @@ import {
   emailConfigWarnings,
   warnEmailConfigOnce,
   type EmailConfig,
+  type EmailSender,
   type TemplateContext,
 } from "../src/email";
 import { enTemplate } from "../src/templates/en";
 import { zhTemplate } from "../src/templates/zh";
 
-const base: EmailConfig = { resendApiKey: "k", from: "f" };
+const base: EmailConfig = { send: async () => {}, from: "f" };
 const ctx = (over: Partial<TemplateContext> = {}): TemplateContext => ({
   code: "123456",
   locale: "en",
@@ -274,23 +275,15 @@ describe("配置告警", () => {
 });
 
 describe("sendCodeEmail 走模板体系", () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
-  beforeEach(() => {
-    fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response("{}", { status: 200 }));
-  });
-  afterEach(() => fetchSpy.mockRestore());
+  const mailer = vi.fn<EmailSender>(async () => {});
+  beforeEach(() => mailer.mockClear());
 
-  const sentBody = () => {
-    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    return JSON.parse(init.body as string);
-  };
+  const sentBody = () => mailer.mock.calls[0][0];
 
   it("消费方模板覆盖生效", async () => {
     await sendCodeEmail(
       {
-        resendApiKey: env.RESEND_API_KEY,
+        send: mailer,
         from: env.EMAIL_FROM_ADDRESS,
         templates: {
           en: {
@@ -313,7 +306,7 @@ describe("sendCodeEmail 走模板体系", () => {
   it("选中语言 zh 时发中文邮件", async () => {
     await sendCodeEmail(
       {
-        resendApiKey: env.RESEND_API_KEY,
+        send: mailer,
         from: env.EMAIL_FROM_ADDRESS,
         brand: "测试品牌",
       },
@@ -326,7 +319,7 @@ describe("sendCodeEmail 走模板体系", () => {
 
   it("缺省选中语言为 en", async () => {
     await sendCodeEmail(
-      { resendApiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM_ADDRESS },
+      { send: mailer, from: env.EMAIL_FROM_ADDRESS },
       "u@x.com",
       "999999"
     );

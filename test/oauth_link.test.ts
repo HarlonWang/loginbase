@@ -6,7 +6,7 @@ import { env } from "cloudflare:workers";
 import { createLogin, createSession, signAccessToken } from "../src/index";
 import type { LinkedIdentity, LinkResult } from "../src/index";
 import { flushEvents } from "@whlong/eventbase";
-import { initDb, initEventsDb, wipeKv } from "./helpers";
+import { initDb, initEventsDb, wipeKv, mailer } from "./helpers";
 
 const REDIRECT = "testapp://auth/link";
 
@@ -52,7 +52,7 @@ function makeLogin(onLinked: (i: LinkedIdentity) => LinkResult) {
     db: e.DB,
     kv: e.EMAIL_CODES,
     jwt: { secret: e.JWT_SECRET },
-    email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+    email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
     socials: {
       github: {
         clientId: "cid",
@@ -71,7 +71,7 @@ function makeLoginWithStats(onLinked: (i: LinkedIdentity) => LinkResult) {
     db: e.DB,
     kv: e.EMAIL_CODES,
     jwt: { secret: e.JWT_SECRET },
-    email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+    email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
     socials: {
       github: { clientId: "cid", clientSecret: "cs", allowedRedirects: [REDIRECT] },
     },
@@ -179,7 +179,7 @@ describe("POST /auth/oauth/github/link/start", () => {
       db: e.DB,
       kv: e.EMAIL_CODES,
       jwt: { secret: e.JWT_SECRET },
-      email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+      email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
       socials: {
         github: { clientId: "cid", clientSecret: "cs", allowedRedirects: [REDIRECT] },
       },
@@ -384,7 +384,7 @@ describe("scope 可配（1.2.0）", () => {
       db: e.DB,
       kv: e.EMAIL_CODES,
       jwt: { secret: e.JWT_SECRET },
-      email: { resendApiKey: e.RESEND_API_KEY, from: e.EMAIL_FROM_ADDRESS },
+      email: { send: mailer, from: e.EMAIL_FROM_ADDRESS },
       socials: {
         github: {
           clientId: "cid",

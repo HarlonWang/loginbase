@@ -69,7 +69,7 @@ const login = createLogin<Env>((env) => ({
   kv: env.EMAIL_CODES,
   jwt: { secret: env.JWT_SECRET },
   email: {
-    resendApiKey: env.RESEND_API_KEY,
+    send: (message) => sendWithYourProvider(env, message),
     from: "Acme <login@acme.com>",
     brand: "Acme",
   },
@@ -90,14 +90,7 @@ export default app;
 
 自己的路由没用 Hono？把 `login.fetch(request, env, ctx)` 放在一个 `pathname.startsWith("/auth")` 后面，效果相同。
 
-不用 Resend 发信？把 `resendApiKey` 换成 `send`——它收到渲染好的 `{ from, to, subject, html, text }`，抛错即视为发送失败：
-
-```ts
-email: {
-  send: (message) => sendWithSes(env, message),
-  from: "Acme <login@acme.com>",
-},
-```
+loginbase 负责渲染邮件，投递归你。`send` 收到 `{ from, to, subject, html, text }`——交给 Resend、SES、Postmark 或你已有的任何信道都行。抛错即视为发送失败：客户端收到 500，验证码不落库。
 
 **4. 加上 GitHub 登录**（可选）——把 OAuth 应用凭据和允许回跳的 deep link 交给 loginbase：
 
@@ -127,13 +120,13 @@ socials: {
 
 ## 运行要求
 
-Cloudflare Workers，带 D1 与 KV binding · `hono` ^4.12.8 · 一个用于投递的 [Resend](https://resend.com) 账号，或你自己的 `send` 函数。
+Cloudflare Workers，带 D1 与 KV binding · `hono` ^4.12.8 · 一个在 `send` 里调用的邮件服务。
 
 **Worker 所在的 zone 不能有任何让第三方子请求可缓存的缓存规则。** loginbase 的 GitHub 登录会以 Worker 子请求的方式、带着用户 token 请求 `api.github.com/user`，而子请求继承所在 zone 的 Cache Rules。zone 上一条「Cache everything」会把这个响应按 URL 缓存，把前一个用户的资料发给下一个用户，造成账号串号。请把 zone 保持在零缓存规则；disabled 的规则不算。机制与排查见 [缓存安全](docs/cache-safety.md)。
 
 ## 不包含什么
 
-loginbase 刻意止步于认证与会话：没有密码登录，没有 OIDC / SAML，没有多租户，没有管理后台，也不存用户档案——用户表归你的 `onVerified` 管。登录方式只有邮箱与 GitHub，邮件内置 Resend、可经 `send` 自带信道，运行时只有 Cloudflare Workers。如果你要的是一个身份提供商而不是一个登录底座，请去用身份提供商。
+loginbase 刻意止步于认证与会话：没有密码登录，没有 OIDC / SAML，没有多租户，没有管理后台，也不存用户档案——用户表归你的 `onVerified` 管。登录方式只有邮箱与 GitHub，邮件经你自己的 `send` 投递、不内置任何服务商，运行时只有 Cloudflare Workers。如果你要的是一个身份提供商而不是一个登录底座，请去用身份提供商。
 
 ## 文档
 

@@ -18,7 +18,7 @@ const login = createLogin<Env>((env) => ({
   kv: env.EMAIL_CODES,
   jwt: { secret: env.JWT_SECRET, accessTtlSeconds: 3600 },
   email: {
-    resendApiKey: env.RESEND_API_KEY,
+    send: (message) => sendViaProvider(env, message),   // 投递归消费方（3.0.0）
     from: env.EMAIL_FROM_ADDRESS,
     brand: "Tono",                            // 进邮件标题/正文
     fallbackLocale: "en",                     // 客户端没说时用哪个语言，默认 en（1.3.0；原 locale）
@@ -177,9 +177,8 @@ users 表**不归库**——库对 `user_id` 只存不读，用户表结构、�
 
 ## 邮件
 
-- 信道 Resend（`https://api.resend.com/emails`，Bearer key），与 Tono 生产同款；QQ/163 送达率验证与 DirectMail 备选见 design.md 风险节。
 - 端态模板体系（第 2 步）：内置 zh/en 两套（`brand` 注入标题与正文），`templates` 整体覆盖钩子留给完全自定义；母本硬编码的 Tono 英文模板即 en 模板的雏形。**1.3.0 起模板体系改按语言分表，见下节。**
-- **`send` 钩子（2.2.0）**：`email` 的投递二选一——`resendApiKey`（内置 Resend，零配置）或 `send(message)`（消费方自带信道，收到渲染好的 `{ from, to, subject, html, text }`，抛错即发送失败）。类型上互斥，两者都给或都不给编译不过。触发者是 TrendingAI 迁 Amazon SES（2026-09-29）；此前挂起的顾虑是「开箱即用会失效」，保留 Resend 作默认分支即化解，Tono 不受影响。库内不引入任何服务商 SDK，签名与重试归消费方。
+- **投递归消费方（3.0.0）**：`email.send(message)` 必填，收到渲染好的 `{ from, to, subject, html, text }`，抛错即发送失败（handler 记 `code_send_failed`、回 500、不写 code 与限流记录）。库只负责语言解析与模板渲染，**不内置任何服务商**：信道选型、签名、重试、送达率都是消费方的运维事务，各 App 本就各有信道（TrendingAI 用 SES、Tono 用 Resend），内置任何一家都会让核心随该服务商的 API 演进，并让其余消费方背一条用不到的代码路径。
 
 ### 语言与模板体系（1.3.0，2026-08-14 定案）
 
@@ -199,7 +198,7 @@ type Part = (ctx: TemplateContext) => string;
 interface EmailTemplate { subject?: Part; html?: Part; text?: Part }   // 三件皆可选
 
 interface EmailConfig {
-  resendApiKey: string;
+  send: (message: EmailMessage) => Promise<void>;
   from: string;
   brand?: string;
   fallbackLocale?: string;                    // 原 locale；封闭枚举 "en"|"zh" 放宽为 string，默认 "en"
@@ -334,7 +333,7 @@ test/             # vitest + @cloudflare/vitest-pool-workers
 
 ## 测试策略
 
-- 框架沿用母本：vitest + @cloudflare/vitest-pool-workers（miniflare 提供真 D1/KV，不 mock 存储层）；Resend 以 fetch mock 拦截。
+- 框架沿用母本：vitest + @cloudflare/vitest-pool-workers（miniflare 提供真 D1/KV，不 mock 存储层）；发信经 `send` 注入的 `vi.fn` 断言，不触网。
 - 测试双层分布：**单元/handler 级测试搬进本包**（code/session/token/rate_limit/email + auth_* 五组 HTTP 测试，改 import 指向包内 app）；**Tono-Server 保留其集成测试**（走它自己的 app 与真实挂载），改依赖本包后全绿即第 1 步验收——同一套断言在两个仓库分别守「库自身正确」与「抽取未破坏消费方」。
 - 协议契约测试与 `protocol.md` 同步演进：错误码表、限流参数、救活行为各有对应断言，protocol 改动无测试跟随视为违反协议纪律（见 CLAUDE.md 铁律）。
 
