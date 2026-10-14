@@ -9,7 +9,7 @@
 | github-ai-trending-api | 消费方（第 3 步）：裸 JS Worker，`/auth` 前缀挂载 `auth.fetch`；业务端点鉴权在 `src/lib/auth.js`（JWT 验签，2026-09-12 起 Logto 已退役） |
 | loginbase-kmp（`HarlonWang/loginbase-kmp`） | **姊妹仓**（2026-08-13 已建）：KMP 客户端库，独立版本线与 CI；协议以本仓 `docs/protocol.md` 为唯一权威，客户端仓不留副本。协议变更须在该仓开跟进 issue（现有 [#1](https://github.com/HarlonWang/loginbase-kmp/issues/1) 跟进 1.2.0 的 link 流程） |
 | TrendingAI | 消费方（第 4 步）：KMP 客户端；竞态防御需求清单（token 获取互斥、丢回执重试、时钟偏差归因）已落进 loginbase-kmp |
-| eventbase（`HarlonWang/eventbase`） | **姊妹底座 + 本仓 peerDependency**：自建埋点，与本仓同构——服务端库跑在各 App 自己的 Worker、数据落各自 D1、协议只住服务端仓、KMP 客户端住姊妹仓。npm `@whlong/eventbase`（本仓 peerDependency `^0.4.0`）。它是 2026-08-18 依赖准入改判的触发点（登录事件与客户端埋点合表）。**2026-09-11（2.0.0）接线已做**：本仓将其列为 peerDependency，登录事件写它的 `events` 表；`auth_events` 的写入路径已整条删除 |
+| eventbase（`HarlonWang/eventbase`） | **姊妹底座 + 本仓 peerDependency**：自建埋点，与本仓同构——服务端库跑在各 App 自己的 Worker、数据落各自 D1、协议只住服务端仓、KMP 客户端住姊妹仓。npm `@whlong/eventbase`（本仓 peerDependency `>=0.4.0 <0.15.0`，eventbase 每发一个 minor 都要验证后再放宽上界）。它是 2026-08-18 依赖准入改判的触发点（登录事件与客户端埋点合表）。**2026-09-11（2.0.0）接线已做**：本仓将其列为 peerDependency，登录事件写它的 `events` 表；`auth_events` 的写入路径已整条删除 |
 | eventbase-kmp（`HarlonWang/eventbase-kmp`） | 埋点 KMP 客户端，`wang.harlon:eventbase-kmp` 0.1.0 已发 Maven Central（2026-08-20）；TrendingAI 已接入（替换 Aptabase） |
 
 ## 铁律
