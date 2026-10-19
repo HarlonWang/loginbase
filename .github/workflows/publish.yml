@@ -37,8 +37,19 @@ jobs:
       - name: Sync version from tag
         run: npm version "$GITHUB_REF_NAME" --no-git-tag-version --allow-same-version
 
+      # 从旧线补丁发版（如 release/2.x 发 2.2.1）时版本低于 registry 的 latest，npm 拒绝隐式打 latest，
+      # 此时打 legacy 标签；正常从 main 发版仍是 latest。只比较前三段数字。
+      - name: Pick dist-tag
+        run: |
+          LATEST=$(npm view loginbase version)
+          if node -e 'const [a,b]=process.argv.slice(1).map(v=>v.split(/[.-]/).slice(0,3).map(Number));for(let i=0;i<3;i++){if(a[i]>b[i])process.exit(0);if(a[i]<b[i])process.exit(1)}process.exit(1)' "$GITHUB_REF_NAME" "$LATEST"; then
+            echo "DIST_TAG=latest" >> "$GITHUB_ENV"
+          else
+            echo "DIST_TAG=legacy" >> "$GITHUB_ENV"
+          fi
+
       - name: Publish to npm
-        run: npm publish
+        run: npm publish --tag "$DIST_TAG"
 
       - name: Create GitHub Release
         run: gh release create "$GITHUB_REF_NAME" --generate-notes
