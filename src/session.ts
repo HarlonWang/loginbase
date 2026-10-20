@@ -237,3 +237,11 @@ export async function revokeAllForUser(
     .bind(Date.now(), userId)
     .run();
 }
+
+/** 删号时物理删除该用户全部会话行（不只是吊销）：账号没了，会话元数据（IP、UA）也不该留。 */
+export async function deleteAllForUser(
+  db: D1Database,
+  userId: string
+): Promise<void> {
+  await db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId).run();
+}

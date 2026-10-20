@@ -1,4 +1,4 @@
-import { CODE_TTL_SECONDS } from "./code.js";
+import { CODE_TTL_SECONDS, type CodePurpose } from "./code.js";
 import { enTemplate } from "./templates/en.js";
 import { zhTemplate } from "./templates/zh.js";
 
@@ -12,6 +12,11 @@ export interface TemplateContext {
   email: string;
   /** 验证码有效期，解开「10 分钟」写死在文案里的约定耦合 */
   ttlMinutes: number;
+  /**
+   * 本封邮件的用途（3.1.0 起）。内置模板据此换标题与提示；消费方的自定义模板
+   * 若不读它，删号邮件会沿用登录文案——能用，但收件人看不出是在删号。
+   */
+  purpose: CodePurpose;
 }
 
 export type TemplatePart = (ctx: TemplateContext) => string;
@@ -230,7 +235,8 @@ export async function sendCodeEmail(
   config: EmailConfig,
   email: string,
   code: string,
-  locale: string = BUILTIN_FALLBACK_LOCALE
+  locale: string = BUILTIN_FALLBACK_LOCALE,
+  purpose: CodePurpose = "sign_in"
 ): Promise<void> {
   const template = resolveTemplate(config, locale);
   const ctx: TemplateContext = {
@@ -239,6 +245,7 @@ export async function sendCodeEmail(
     locale,
     email,
     ttlMinutes: Math.round(CODE_TTL_SECONDS / 60),
+    purpose,
   };
   const message: EmailMessage = {
     from: config.from,

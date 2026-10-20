@@ -23,6 +23,7 @@ const ctx = (over: Partial<TemplateContext> = {}): TemplateContext => ({
   locale: "en",
   email: "u@x.com",
   ttlMinutes: 10,
+  purpose: "sign_in",
   ...over,
 });
 

@@ -33,6 +33,7 @@ import { createTracker, clientOf, clientRequestMeta, type StatEvent } from "./st
 import { trimmedField } from "./body.js";
 import { matchDemoAccount } from "./demo_account.js";
 import { registerGithubOauth } from "./plugins/github.js";
+import { registerAccountDeletion } from "./account.js";
 import type { LoginConfig, VerifiedResult } from "./config.js";
 
 export function createAuthApp<TEnv>(
@@ -333,6 +334,7 @@ export function createAuthApp<TEnv>(
   });
 
   registerGithubOauth(auth, getConfig, basePath);
+  registerAccountDeletion(auth, getConfig, authMiddleware);
 
   return auth;
 }

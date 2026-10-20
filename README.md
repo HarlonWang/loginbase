@@ -21,7 +21,7 @@ loginbase is the middle path. The session model of a real auth product, shipped 
 
 - **Passwordless sign-in, more than one way.** Six-digit email codes with enumeration-safe responses and three layers of rate limiting, GitHub OAuth, and account linking — so a signed-in user claims a second identity instead of ending up with a duplicate account. Code emails ship in English and Chinese.
 - **Token theft is detected; bad networks aren't punished.** Refresh tokens rotate on every use, and a replayed token kills the session on the spot. A refresh response lost to a flaky connection is *not* theft, and gets recovered rather than punished.
-- **Passes app-store review.** Passwordless login can't produce the static credentials Google Play and App Store Connect ask for. An optional demo account can, without opening an authentication bypass.
+- **Passes app-store review.** Passwordless login can't produce the static credentials Google Play and App Store Connect ask for. An optional demo account can, without opening an authentication bypass. The in-app account deletion the App Store requires is there too: confirmed by a code sent to the account email, with your app deciding what data goes.
 - **Login analytics built in.** Every send, verify, refresh and revoke lands in your own `auth_events` table, with geography from `request.cf` — no external dependency, no data leaving your account.
 - **A client that hides tokens entirely.** With [loginbase-kmp](https://github.com/HarlonWang/loginbase-kmp), your app code never contains a token, a refresh call, or a 401 handler.
 

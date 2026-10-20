@@ -83,6 +83,41 @@ export type OnLinked = (
   identity: LinkedIdentity
 ) => Promise<LinkResult> | LinkResult;
 
+/**
+ * 账号删除（3.1.0 起）。提供后才启用 `/account/delete/code` 与 `/account/delete`
+ * （未提供 → 404 not_configured，与 onLinked 同为默认关闭、显式启用）。
+ *
+ * 库只管两件事：用发往账号邮箱的删号验证码确认本人，以及删掉自己的 `sessions` 行。
+ * 账号存不存在、能不能删、删哪些数据，全由 App 裁决——与 onVerified 同一条边界。
+ */
+export interface AccountDeletionConfig {
+  /**
+   * userId → 账号邮箱，删号验证码发往这里（库没有用户表，只能问 App）。
+   * 返回 null = 账号已不存在 → 404 account_not_found。
+   */
+  emailOf: (userId: string) => Promise<string | null> | string | null;
+  /**
+   * 可选前置检查（如「有生效中的订阅，先去取消」），发码与删除前各跑一次：
+   * 发码前跑是为了不让用户收了码才被拒。拒绝原因经 `reason` 原样回给客户端，
+   * 须为 `[A-Za-z0-9_]{1,64}`，否则回落为 `blocked`。
+   */
+  check?: (userId: string) => Promise<DeletionCheck> | DeletionCheck;
+  /**
+   * 删除 App 侧数据。验证码通过后、库删会话前调用；抛错 → 500 internal，
+   * 会话不动（码已焚，重新发码即可重试），故实现须可重入。
+   */
+  onDelete: (ctx: DeletionContext) => Promise<void> | void;
+}
+
+export type DeletionCheck = { ok: true } | { ok: false; reason: string };
+
+export interface DeletionContext {
+  userId: string;
+  /** emailOf 返回、验证码所发往的邮箱（已归一化小写） */
+  email: string;
+  requestMeta: RequestMeta;
+}
+
 // onEvent：结构化事件出口（refresh 的 rescued / reuse_revoked / guardrail_revoked 等），
 // 默认实现为单行 JSON console.log（配合 Workers Logs）。字段永不含 token/code 明文。
 export type OnEvent = (event: Record<string, unknown>) => void;
@@ -149,6 +184,7 @@ export interface LoginConfig {
   onVerified: OnVerified;
   /** 提供后才启用 link 端点（未提供 → 404 not_configured，默认关闭、显式启用） */
   onLinked?: OnLinked;
+  accountDeletion?: AccountDeletionConfig;
   onEvent?: OnEvent;
   socials?: { github?: GithubSocialConfig };
 }

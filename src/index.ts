@@ -40,6 +40,9 @@ export type {
   LinkedIdentity,
   LinkResult,
   OnLinked,
+  AccountDeletionConfig,
+  DeletionCheck,
+  DeletionContext,
   OnEvent,
   GithubSocialConfig,
 } from "./config.js";

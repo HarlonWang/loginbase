@@ -2,7 +2,7 @@
 
 > **本文件是 API 契约的唯一权威**，只住服务端仓——客户端仓 `HarlonWang/loginbase-kmp` 只链接、不留副本。协议变更必须与服务端实现同 commit，并在客户端仓开跟进 issue、客户端版本落地前不关（2026-08-13 分仓后的纪律，见 CLAUDE.md 铁律与 design.md）。
 >
-> 协议版本以**服务端包版本**表达：本文对应 `loginbase@1.9.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
+> 协议版本以**服务端包版本**表达：本文对应 `loginbase@3.1.0`。客户端仓自有版本线（`0.1.0` 起），在其 README 声明对齐到哪个服务端版本，两端版本号不追求相等。
 >
 > 结构与决策背景见 [server-design.md](server-design.md)；本文只记 wire 层事实。
 
@@ -115,6 +115,42 @@ Bearer 鉴权。吊销当前会话（access token 的 `sid`）。成功 `204`；
 
 Bearer 鉴权。吊销该用户全部会话。成功 `204`；无/坏 token `401`。
 
+## 账号删除（3.1.0 起，服务端配置 `accountDeletion` 后启用）
+
+两步：先往**账号邮箱**发删号验证码，再凭码删除。持 access token 只证明拿到了登录态，删号不可逆，故再要一次「能收账号邮箱的信」的证明。未配置时两个端点均 `404 { "error": "not_configured" }`。
+
+删号码与登录码**分开存放、互不可代用**；发码与登录发码**共用同一套限流**（同邮箱、同 IP 计数）。演示账号同样是固定码、不发信。
+
+### POST /account/delete/code
+
+Bearer 鉴权。请求：`{ "locale"?: string }`（语义同 `/code/send`）。邮件发往服务端查到的账号邮箱，客户端不传邮箱。
+
+| 结果 | 状态码 | 响应 |
+|---|---|---|
+| 成功 | 200 | `{ "cooldownSeconds": 60 }` |
+| 账号已不存在 | 404 | `{ "error": "account_not_found" }` |
+| App 拒绝删号（如有生效中的订阅） | 409 | `{ "error": "deletion_blocked", "reason": string }` |
+| 限流命中 | 429 | `{ "error": "too_many_requests", "retryAfterSeconds": number }` |
+| 邮件信道或 App 钩子失败 | 500 | `{ "error": "internal" }` |
+
+`reason` 由消费方 App 自定（字符集 `[A-Za-z0-9_]{1,64}`，不合规回落 `blocked`），客户端按已知值给出针对性提示，未知值给通用提示。**发码前就做检查**，用户不会收了码才被拒。
+
+### POST /account/delete
+
+Bearer 鉴权。请求：`{ "code": string }`
+
+| 结果 | 状态码 | 响应 |
+|---|---|---|
+| 成功 | 204 | 无 |
+| 账号已不存在 | 404 | `{ "error": "account_not_found" }` |
+| App 拒绝删号 | 409 | `{ "error": "deletion_blocked", "reason": string }`（码不焚，解除原因后可继续用） |
+| 无有效删号码 | 400 | `{ "error": "code_expired" }` |
+| 验证码不匹配 | 400 | `{ "error": "invalid_code" }` |
+| 第 5 次错误（码即焚） | 429 | `{ "error": "too_many_attempts" }` |
+| App 删除数据失败 | 500 | `{ "error": "internal" }`（码已焚、会话保留，重新发码即可重试） |
+
+成功后该用户**全部会话行被物理删除**，refresh 一律 `401 session_not_found`；已签发的 access token 仍可用到过期（≤ TTL），消费方的业务端点应在用户不存在时拒绝。客户端收到 204 即清本地登录态。
+
 ## GitHub OAuth（可选插件，服务端配置 `socials.github` 后启用）
 
 设计目标：**token 永不进 URL**（移动端 deepLink 回跳链路），以一次性授权码（otc）中转。未配置该插件时，以下端点返回 `404 { "error": "not_configured" }`。
@@ -197,7 +233,12 @@ GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注�
 | `invalid_otc` | oauth/exchange | 400 |
 | `not_configured` | oauth/*（插件未配置；link 端点还需 `onLinked` 已提供） | 404 |
 | `already_linked` 等 | oauth/github/callback 的 link 分支回跳（**App 自定**，非库内枚举） | 302 |
-| `internal` | code/send、code/verify、oauth | 500 |
+| `account_not_found` | account/delete/code、account/delete | 404 |
+| `deletion_blocked` (+`reason`) | account/delete/code、account/delete | 409 |
+| `too_many_requests` | account/delete/code | 429 |
+| `code_expired` / `invalid_code` / `too_many_attempts` | account/delete | 400 / 400 / 429 |
+| `not_configured` | account/*（未配置 `accountDeletion`） | 404 |
+| `internal` | code/send、code/verify、oauth、account/* | 500 |
 | `Unauthorized` / `Invalid token` | Bearer 鉴权端点 | 401 |
 
 ## 服务端 KV 键位（实现事实，非客户端契约）
@@ -205,12 +246,15 @@ GitHub 回调，**login 与 link 共用**（GitHub OAuth App 的回调地址注�
 | 键 | TTL | 用途 |
 |---|---|---|
 | `code:{email}` | 600s | 验证码 `{code, attempts, issuedAt}` |
+| `delete_code:{email}` | 600s | 删号验证码，形状同上（3.1.0 起） |
 | `cooldown:{email}` | 60s | 发码冷却 |
 | `rl:email:{email}` / `rl:ip:{ip}` | 600s / 3600s | 发码计数 |
 | `oauth:state:{state}` | 600s | OAuth state（单次） |
 | `oauth:otc:{otc}` | 60s | 一次性授权码载荷（单次） |
 
 ## 版本历史
+
+- **3.1.0**（2026-10）：新增**可选**账号删除端点 `POST /account/delete/code` 与 `POST /account/delete`（见上方「账号删除」节），服务端配置 `accountDeletion` 后启用。动因是 App Store 审核 5.1.1(v) 要求 App 内可删号。**wire 向后兼容**：既有端点零变更，未配置时新端点 404。邮件模板的 `TemplateContext` 新增 `purpose`（`sign_in` / `delete_account`），内置 en/zh 据此换文案；消费方自定义模板不读它也能用，只是删号邮件沿用登录文案。
 
 - **2.1.0**（2026-09-11）：`link/start` 的请求体新增**可选** `client_flow_id`，随 state 透传进
   `oauth_start` / `oauth_callback` 事件，使绑定流程也能与消费方埋点跨库对齐（login 侧自 1.7.0 已有）。
